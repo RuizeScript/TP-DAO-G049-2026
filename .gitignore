@@ -2,3 +2,5 @@ __pycache__/
 *.pyc
 .pytest_cache/
 .vscode/
+biblioteca.db
+test_biblioteca.db

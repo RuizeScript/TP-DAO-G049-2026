@@ -23,15 +23,20 @@ class RemitoDAO:
     def crear(self, remito: Remito) -> None:
         with self._conn() as cx:
             cx.execute("""
-                INSERT INTO remitos (id_remito, id_ejemplar, id_sede_origen, id_sede_destino, estado_actual)
-                VALUES (?, ?, ?, ?, ?)
+                INSERT INTO remitos (id_remito, id_sede_origen, id_sede_destino, estado_actual)
+                VALUES (?, ?, ?, ?)
             """, (
                 remito.id_remito,
-                remito.ejemplar.id_ejemplar,
                 remito.sede_origen.id_sede,
                 remito.sede_destino.id_sede,
                 str(remito.estado_actual)
             ))
+
+            for ejemplar in remito.ejemplares:
+                cx.execute("""
+                    INSERT INTO remito_ejemplares (id_remito, id_ejemplar)
+                    VALUES (?, ?)
+                """, (remito.id_remito, ejemplar.id_ejemplar))
 
             for reg in remito.trazabilidad:
                 cx.execute("""
@@ -43,6 +48,22 @@ class RemitoDAO:
                     reg["fecha_hora"].isoformat(),
                     reg["observacion"]
                 ))
+
+    def agregar_ejemplar(self, id_remito: str, id_ejemplar: str) -> None:
+        """Suma un ejemplar a un remito ya existente (solo tiene sentido mientras el remito está Creado)."""
+        with self._conn() as cx:
+            cx.execute("""
+                INSERT INTO remito_ejemplares (id_remito, id_ejemplar)
+                VALUES (?, ?)
+            """, (id_remito, id_ejemplar))
+
+    def obtener_ids_ejemplares(self, id_remito: str) -> List[str]:
+        with self._conn() as cx:
+            cur = cx.execute(
+                "SELECT id_ejemplar FROM remito_ejemplares WHERE id_remito = ? ORDER BY rowid ASC",
+                (id_remito,)
+            )
+            return [fila[0] for fila in cur.fetchall()]
 
     def agregar_trazabilidad(self, id_remito: str, estado: str, fecha_hora: datetime, observacion: str) -> None:
         with self._conn() as cx:
@@ -82,13 +103,19 @@ class RemitoDAO:
         ejemplares_dict: Optional[Dict[str, Ejemplar]] = None,
         sedes_dict: Optional[Dict[str, Sede]] = None
     ) -> Remito:
-        ejemplar = ejemplares_dict.get(row["id_ejemplar"]) if ejemplares_dict else None
+        ejemplares = []
+        if ejemplares_dict:
+            ejemplares = [
+                ejemplares_dict[id_ej]
+                for id_ej in self.obtener_ids_ejemplares(row["id_remito"])
+                if id_ej in ejemplares_dict
+            ]
         sede_origen = sedes_dict.get(row["id_sede_origen"]) if sedes_dict else None
         sede_destino = sedes_dict.get(row["id_sede_destino"]) if sedes_dict else None
 
         remito = Remito.__new__(Remito)
         remito._id_remito = row["id_remito"]
-        remito.ejemplar = ejemplar
+        remito.ejemplares = ejemplares
         remito.sede_origen = sede_origen
         remito.sede_destino = sede_destino
 
@@ -119,6 +146,7 @@ class RemitoDAO:
     ) -> List[Remito]:
         with self._conn() as cx:
             cx.row_factory = sqlite3.Row
-            cur = cx.execute("SELECT * FROM remitos ORDER BY id_remito")
+            # En orden de creación (no alfabético): así los remitos nuevos (REM-001...) quedan después de los viejos (REM-PREST-...)
+            cur = cx.execute("SELECT * FROM remitos ORDER BY rowid")
             filas = cur.fetchall()
             return [self._fila_a_remito(r, ejemplares_dict, sedes_dict) for r in filas]

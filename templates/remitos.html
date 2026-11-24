@@ -7,6 +7,10 @@
     <div>
         <h2 class="fw-bold mb-1">Trazabilidad de Remitos Logísticos</h2>
         <p class="text-muted mb-0">Implementación estricta del <strong>Patrón State</strong> (Creado &rarr; Empaquetado &rarr; Despachado &rarr; Recibido).</p>
+        <p class="text-muted small mb-0">
+            Cada remito agrupa <strong>varios ejemplares</strong> de una misma ruta: mientras está <em>Creado</em> (abierto) se le suman
+            automáticamente los préstamos inter-sede con ese origen y destino. Al <em>Empaquetar</em> se cierra y viaja todo junto.
+        </p>
     </div>
     <span class="badge bg-primary fs-6 px-3 py-2">
         <i class="bi bi-diagram-3-fill me-1"></i> Patrón State Activo
@@ -24,7 +28,7 @@
                 <thead class="table-light">
                     <tr>
                         <th>Remito ID</th>
-                        <th>Ejemplar / Libro</th>
+                        <th>Ejemplares que lleva</th>
                         <th>Trayecto</th>
                         <th>Estado Logístico Actual</th>
                         <th>Acciones de Avance de Estado</th>
@@ -37,8 +41,18 @@
                     <tr>
                         <td class="fw-bold text-dark">{{ r.id_remito }}</td>
                         <td>
-                            <div class="fw-semibold">{{ r.ejemplar.libro.titulo }}</div>
-                            <span class="badge bg-light text-secondary border">Ejemplar: {{ r.ejemplar.id_ejemplar }}</span>
+                            <span class="badge bg-dark mb-1">{{ r.cantidad_ejemplares }} ejemplar{{ '' if r.cantidad_ejemplares == 1 else 'es' }}</span>
+                            {% if estado_str == 'Creado' %}
+                                <span class="badge bg-success-subtle text-success border border-success-subtle mb-1">Abierto: admite más</span>
+                            {% endif %}
+                            <ul class="list-unstyled small mb-0">
+                                {% for e in r.ejemplares %}
+                                <li>
+                                    <span class="badge bg-light text-secondary border">{{ e.id_ejemplar }}</span>
+                                    <span class="fw-semibold">{{ e.libro.titulo }}</span>
+                                </li>
+                                {% endfor %}
+                            </ul>
                         </td>
                         <td>
                             <div class="small fw-medium">{{ r.sede_origen.nombre }} &rarr; {{ r.sede_destino.nombre }}</div>

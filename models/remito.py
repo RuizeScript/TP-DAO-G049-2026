@@ -2,9 +2,13 @@ from abc import ABC, abstractmethod
 from datetime import datetime
 from models.excepciones import TransicionInvalidaError
 
-#Cualqioer estado q exista tiene q tener los metodos empaquetar, despachar y recibir,
+#Cualqioer estado q exista tiene q tener los metodos agregar_ejemplar, empaquetar, despachar y recibir,
 #por eso se define la clase abstracta EstadoRemito
 class EstadoRemito(ABC):
+    @abstractmethod
+    def agregar_ejemplar(self, remito, ejemplar):
+        pass
+
     @abstractmethod
     def empaquetar(self, remito):
         pass
@@ -22,7 +26,17 @@ class EstadoRemito(ABC):
 
 
 class Creado(EstadoRemito):
+    # Mientras el remito está Creado está "abierto": es el único estado que admite más ejemplares.
+    def agregar_ejemplar(self, remito, ejemplar):
+        if any(e.id_ejemplar == ejemplar.id_ejemplar for e in remito.ejemplares):
+            raise TransicionInvalidaError(
+                f"El ejemplar {ejemplar.id_ejemplar} ya está incluido en el remito {remito.id_remito}"
+            )
+        remito.ejemplares.append(ejemplar)
+
     def empaquetar(self, remito):
+        if not remito.ejemplares:
+            raise TransicionInvalidaError("No se puede empaquetar un remito sin ejemplares")
         remito.estado_actual = Empaquetado()
         remito.registrar_trazabilidad("Empaquetado")
 
@@ -34,6 +48,9 @@ class Creado(EstadoRemito):
 
 
 class Empaquetado(EstadoRemito):
+    def agregar_ejemplar(self, remito, ejemplar):
+        raise TransicionInvalidaError("No se pueden agregar ejemplares a un remito que ya fue empaquetado")
+
     def empaquetar(self, remito):
         raise TransicionInvalidaError("El remito ya ha sido empaquetado")
 
@@ -46,6 +63,9 @@ class Empaquetado(EstadoRemito):
 
 
 class Despachado(EstadoRemito):
+    def agregar_ejemplar(self, remito, ejemplar):
+        raise TransicionInvalidaError("No se pueden agregar ejemplares a un remito que ya fue despachado")
+
     def empaquetar(self, remito):
         raise TransicionInvalidaError("No se puede empaquetar un remito que ya ha sido despachado")
 
@@ -58,6 +78,9 @@ class Despachado(EstadoRemito):
 
 
 class Recibido(EstadoRemito):
+    def agregar_ejemplar(self, remito, ejemplar):
+        raise TransicionInvalidaError("No se pueden agregar ejemplares a un remito que ya fue recibido")
+
     def empaquetar(self, remito):
         raise TransicionInvalidaError("No se puede empaquetar un remito que ya ha sido recibido")
 
@@ -69,11 +92,12 @@ class Recibido(EstadoRemito):
 
 
 class Remito:
-    def __init__(self, id_remito: str, ejemplar, sede_origen, sede_destino):
+    # Un remito agrupa N ejemplares que viajan juntos entre la misma sede de origen y de destino (relación 1 a N).
+    def __init__(self, id_remito: str, sede_origen, sede_destino, ejemplares=None):
         self._id_remito = id_remito
-        self.ejemplar = ejemplar
         self.sede_origen = sede_origen
         self.sede_destino = sede_destino
+        self.ejemplares = list(ejemplares) if ejemplares else []
         self.estado_actual = Creado()
         self.trazabilidad = []
         self.registrar_trazabilidad("Creado")
@@ -85,6 +109,10 @@ class Remito:
     @id_remito.setter
     def id_remito(self, value):
         self._id_remito = value
+
+    @property
+    def cantidad_ejemplares(self) -> int:
+        return len(self.ejemplares)
 
     @property
     def historial_trazabilidad(self):
@@ -99,6 +127,9 @@ class Remito:
         self.trazabilidad.append(registro)
 
     # delega la accion a su estado actual que es una clase con sus def, que es quien sabe como empaquetar un remito
+    def agregar_ejemplar(self, ejemplar):
+        self.estado_actual.agregar_ejemplar(self, ejemplar)
+
     def empaquetar(self):
         self.estado_actual.empaquetar(self)
 
@@ -109,4 +140,4 @@ class Remito:
         self.estado_actual.recibir(self)
 
     def __str__(self):
-        return f"Remito {self.id_remito} - Estado: {self.estado_actual}"
+        return f"Remito {self.id_remito} - Estado: {self.estado_actual} - {self.cantidad_ejemplares} ejemplar(es)"

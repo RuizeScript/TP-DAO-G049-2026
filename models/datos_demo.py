@@ -1,4 +1,4 @@
-from datetime import date, timedelta
+from datetime import date, datetime, time, timedelta
 from models.entidades import Sede, Socio, Libro, Ejemplar
 from models.enum import Estado
 from models.gestor import GestorBiblioteca
@@ -12,8 +12,9 @@ def cargar_datos_iniciales(gestor: GestorBiblioteca):
     - Catálogo amplio con clásicos de Ciencia Ficción, Fantasía, Matemática, Física e Ingeniería.
     - Ejemplares físicos distribuidos estratégicamente entre sedes.
     - Escenarios operativos representativos: préstamos locales, interbibliotecarios con remitos
-      en diversos estados (Creado, Empaquetado, Despachado/En Tránsito), préstamos vencidos
-      con cálculo de mora para reportes, préstamos devueltos y reservas activas.
+      que agrupan varios ejemplares por ruta, en diversos estados (Creado, Empaquetado, Despachado/En Tránsito,
+      Recibido), historial de envíos con fechas (a tiempo, tardío y estancado), préstamos vencidos con
+      distinta gravedad, préstamos devueltos en término y fuera de término, y reservas activas.
     """
     if gestor.sedes:
         return  # Ya fue inicializado
@@ -192,6 +193,61 @@ def cargar_datos_iniciales(gestor: GestorBiblioteca):
     # =========================================================================
     # 5. ESCENARIOS OPERATIVOS (Préstamos, Remitos en varios estados y Reservas)
     # =========================================================================
+    def hace(dias: int, hora: int) -> datetime:
+        """Fecha y hora de hace N días (para cargar historial de remitos con tiempos reales)."""
+        return datetime.combine(date.today() - timedelta(days=dias), time(hora, 0))
+
+    hoy = date.today()
+
+    # --- 5.1 HISTORIAL DE ENVÍOS (se carga primero para que esos remitos ya estén cerrados) ---
+    # H1. Envío a tiempo y agrupado: dos préstamos Norte -> Central viajan en UN mismo remito (REM-001).
+    #     Tránsito de 1 d 21 h (dentro del SLA de 3 días). Camila lo devuelve 2 días tarde (la sanción ya venció).
+    gestor.crear_prestamo(id_prestamo="PREST-109", id_socio="SOC-08", id_ejemplar="EJ-02",
+                          id_sede_origen="SED-02", id_sede_destino="SED-01",
+                          dias_prestamo=14, fecha_inicio=hoy - timedelta(days=30))
+    gestor.crear_prestamo(id_prestamo="PREST-110", id_socio="SOC-05", id_ejemplar="EJ-10",
+                          id_sede_origen="SED-02", id_sede_destino="SED-01",
+                          dias_prestamo=14, fecha_inicio=hoy - timedelta(days=30))
+    gestor.empaquetar_remito("REM-001", hace(29, 10))
+    gestor.despachar_remito("REM-001", hace(29, 15))
+    gestor.recibir_remito("REM-001", hace(27, 12))
+    gestor.registrar_devolucion("PREST-110", hoy - timedelta(days=18), Estado.OPTIMO)    # en término
+    gestor.registrar_devolucion("PREST-109", hoy - timedelta(days=14), Estado.BUENO)     # 2 días tarde
+
+    # H2. Entrega TARDÍA: Central -> Patricios tardó 5 d 3 h en tránsito (SLA de 3 días) -> incidencia (REM-002).
+    gestor.crear_prestamo(id_prestamo="PREST-111", id_socio="SOC-02", id_ejemplar="EJ-28",
+                          id_sede_origen="SED-01", id_sede_destino="SED-03",
+                          dias_prestamo=14, fecha_inicio=hoy - timedelta(days=12))
+    gestor.empaquetar_remito("REM-002", hace(12, 16))
+    gestor.despachar_remito("REM-002", hace(11, 9))
+    gestor.recibir_remito("REM-002", hace(6, 12))
+
+    # H3. Remito ESTANCADO: Norte -> Patricios quedó empaquetado hace 5 días y nunca se despachó (REM-003).
+    gestor.crear_prestamo(id_prestamo="PREST-112", id_socio="SOC-04", id_ejemplar="EJ-27",
+                          id_sede_origen="SED-02", id_sede_destino="SED-03",
+                          dias_prestamo=14, fecha_inicio=hoy - timedelta(days=6))
+    gestor.empaquetar_remito("REM-003", hace(5, 11))
+
+    # H4. Otro préstamo local devuelto en término.
+    gestor.crear_prestamo(id_prestamo="PREST-115", id_socio="SOC-01", id_ejemplar="EJ-13",
+                          id_sede_origen="SED-01", id_sede_destino="SED-01",
+                          dias_prestamo=7, fecha_inicio=hoy - timedelta(days=12))
+    gestor.registrar_devolucion("PREST-115", hoy - timedelta(days=7), Estado.OPTIMO)
+
+    # --- 5.2 PRÉSTAMOS VENCIDOS de distinta gravedad (alimentan el reporte de morosidad) ---
+    # Sofía Benítez acumula dos: PREST-105 (11 días de mora, moderada) y PREST-114 (31 días, grave).
+    gestor.crear_prestamo(id_prestamo="PREST-105", id_socio="SOC-06", id_ejemplar="EJ-19",
+                          id_sede_origen="SED-02", id_sede_destino="SED-02",
+                          dias_prestamo=14, fecha_inicio=hoy - timedelta(days=25))
+    gestor.crear_prestamo(id_prestamo="PREST-114", id_socio="SOC-06", id_ejemplar="EJ-18",
+                          id_sede_origen="SED-01", id_sede_destino="SED-01",
+                          dias_prestamo=14, fecha_inicio=hoy - timedelta(days=45))
+    # Lucas Navarro: 5 días de mora (leve), préstamo local en Sede Parque Patricios.
+    gestor.crear_prestamo(id_prestamo="PREST-113", id_socio="SOC-07", id_ejemplar="EJ-26",
+                          id_sede_origen="SED-03", id_sede_destino="SED-03",
+                          dias_prestamo=30, fecha_inicio=hoy - timedelta(days=35))
+
+    # --- 5.3 OPERACIÓN ACTUAL ---
     # A. Préstamo local activo: Martín Palermo toma Clean Code en Sede Central
     gestor.crear_prestamo(
         id_prestamo="PREST-101",
@@ -202,8 +258,9 @@ def cargar_datos_iniciales(gestor: GestorBiblioteca):
         dias_prestamo=14
     )
 
-    # B. Préstamo interbibliotecario en preparación (Remito CREADO):
-    # Lucía Gómez solicita Design Patterns GoF de Sede Central para retirar en Sede Norte
+    # B. Remito ABIERTO con 2 ejemplares (REM-004, Central -> Norte, estado Creado):
+    # Lucía Gómez pide Design Patterns GoF y Martín Palermo pide Fundación; ambos van a retirar a Sede Norte,
+    # por eso comparten remito y viajarán juntos cuando se empaquete. Admite más ejemplares hasta entonces.
     gestor.crear_prestamo(
         id_prestamo="PREST-102",
         id_socio="SOC-02",
@@ -212,22 +269,40 @@ def cargar_datos_iniciales(gestor: GestorBiblioteca):
         id_sede_destino="SED-02",
         dias_prestamo=14
     )
+    gestor.crear_prestamo(
+        id_prestamo="PREST-107",
+        id_socio="SOC-01",
+        id_ejemplar="EJ-04",
+        id_sede_origen="SED-01",
+        id_sede_destino="SED-02",
+        dias_prestamo=14
+    )
 
-    # C. Préstamo interbibliotecario EN TRÁNSITO (Remito DESPACHADO):
-    # Valentina Rossi pide Dune de Sede Central para retirar en Sede Parque Patricios.
-    # El remito avanza por Creado -> Empaquetado -> Despachado, dejando el ejemplar EN_TRANSITO.
+    # C. Remito EN TRÁNSITO con 2 ejemplares (REM-005, Central -> Parque Patricios, estado Despachado):
+    # Valentina Rossi (Dune) y Lucas Navarro (El Problema de los Tres Cuerpos) retiran en Parque Patricios.
+    # Se empaquetó y despachó ayer: Creado -> Empaquetado -> Despachado, ejemplares EN_TRANSITO.
     gestor.crear_prestamo(
         id_prestamo="PREST-103",
         id_socio="SOC-04",
         id_ejemplar="EJ-01",
         id_sede_origen="SED-01",
         id_sede_destino="SED-03",
-        dias_prestamo=10
+        dias_prestamo=10,
+        fecha_inicio=hoy - timedelta(days=1)
     )
-    gestor.empaquetar_remito("REM-PREST-103")
-    gestor.despachar_remito("REM-PREST-103")
+    gestor.crear_prestamo(
+        id_prestamo="PREST-108",
+        id_socio="SOC-07",
+        id_ejemplar="EJ-08",
+        id_sede_origen="SED-01",
+        id_sede_destino="SED-03",
+        dias_prestamo=10,
+        fecha_inicio=hoy - timedelta(days=1)
+    )
+    gestor.empaquetar_remito("REM-005", hace(1, 10))
+    gestor.despachar_remito("REM-005", hace(1, 15))
 
-    # D. Préstamo interbibliotecario EMPAQUETADO:
+    # D. Remito EMPAQUETADO (REM-006, Norte -> Central, 1 ejemplar):
     # Matías Fernández solicita Física Sears-Zemansky de Sede Norte para retirar en Sede Central.
     gestor.crear_prestamo(
         id_prestamo="PREST-104",
@@ -235,35 +310,23 @@ def cargar_datos_iniciales(gestor: GestorBiblioteca):
         id_ejemplar="EJ-25",
         id_sede_origen="SED-02",
         id_sede_destino="SED-01",
-        dias_prestamo=14
-    )
-    gestor.empaquetar_remito("REM-PREST-104")
-
-    # E. Préstamo VENCIDO (para alimentar el Reporte 2 de mora y atraso):
-    # Sofía Benítez solicitó Cálculo Stewart en Sede Norte hace 25 días con plazo de 14 días.
-    fecha_inicio_vencido = date.today() - timedelta(days=25)
-    gestor.crear_prestamo(
-        id_prestamo="PREST-105",
-        id_socio="SOC-06",
-        id_ejemplar="EJ-19",
-        id_sede_origen="SED-02",
-        id_sede_destino="SED-02",
         dias_prestamo=14,
-        fecha_inicio=fecha_inicio_vencido
+        fecha_inicio=hoy - timedelta(days=2)
     )
+    gestor.empaquetar_remito("REM-006", hace(2, 17))
 
-    # F. Préstamo DEVUELTO históricamente (cumplido en tiempo y forma):
-    # Lucas Navarro tomó El Señor de los Anillos y ya lo devolvió en estado EXCELENTE.
-    p_devuelto = gestor.crear_prestamo(
+    # E. Préstamo DEVUELTO históricamente (cumplido en tiempo y forma):
+    # Lucas Navarro tomó El Señor de los Anillos y ya lo devolvió en estado ÓPTIMO.
+    gestor.crear_prestamo(
         id_prestamo="PREST-106",
         id_socio="SOC-07",
         id_ejemplar="EJ-11",
         id_sede_origen="SED-01",
         id_sede_destino="SED-01",
         dias_prestamo=7,
-        fecha_inicio=date.today() - timedelta(days=10)
+        fecha_inicio=hoy - timedelta(days=10)
     )
-    gestor.registrar_devolucion("PREST-106", date.today() - timedelta(days=3), Estado.OPTIMO)
+    gestor.registrar_devolucion("PREST-106", hoy - timedelta(days=3), Estado.OPTIMO)
 
     # =========================================================================
     # 6. RESERVAS ACTIVAS

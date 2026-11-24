@@ -9,7 +9,7 @@
         <div class="card shadow-sm border-top border-4 border-primary">
             <div class="card-header bg-white py-3 border-0">
                 <h5 class="fw-bold mb-0 text-dark"><i class="bi bi-arrow-left-right text-primary me-2"></i>Registrar Solicitud de Préstamo</h5>
-                <small class="text-muted">Préstamo local o interbibliotecario (genera remito si origen != destino)</small>
+                <small class="text-muted">Préstamo local o interbibliotecario (si origen != destino, el ejemplar se suma a un remito abierto de esa ruta o abre uno nuevo)</small>
             </div>
             <div class="card-body">
                 <form action="{{ url_for('prestamos') }}" method="POST">

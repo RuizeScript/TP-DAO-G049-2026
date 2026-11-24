@@ -1,8 +1,8 @@
-from datetime import date, datetime
+from datetime import date, datetime, time
 from models.enum import EstadoEjemplar, Estado
 from models.entidades import Sede, Socio, Libro, Ejemplar
 from models.operaciones import Prestamo, Reserva
-from models.remito import Remito
+from models.remito import Remito, Creado, Recibido
 from models.excepciones import (
     BibliotecaExcepcion,
     EjemplarNoDisponibleError,
@@ -154,6 +154,19 @@ class GestorBiblioteca:
                     pass
         return f"RES-{max_id + 1:02d}"
 
+    def generar_id_remito(self) -> str:
+        max_id = 0
+        for r in self.remitos:
+            if r.id_remito and r.id_remito.startswith("REM-"):
+                try:
+                    num = int(r.id_remito.split("-")[1])
+                    if num > max_id:
+                        max_id = num
+                except (ValueError, IndexError):
+                    # IDs viejos con formato REM-PREST-xxx (1 remito por préstamo) no entran en la numeración
+                    pass
+        return f"REM-{max_id + 1:03d}"
+
     def generar_isbn(self) -> str:
         max_id = 0
         for isbn in self.libros.keys():
@@ -262,12 +275,11 @@ class GestorBiblioteca:
         self.ejemplar_dao.actualizar(ejemplar)
         self.prestamos.append(prestamo)
 
-        # Si es interbibliotecario, se genera un remito para logística (Trazabilidad)
+        # Si es interbibliotecario, el ejemplar viaja en un remito (Trazabilidad), agrupado con otros de la misma ruta
         if prestamo.es_interbibliotecario:
-            id_remito = f"REM-{id_prestamo}"
-            remito = Remito(id_remito, ejemplar, sede_origen, sede_destino)
-            self.remito_dao.crear(remito)
-            self.remitos.append(remito)
+            # Si el préstamo se carga con una fecha de inicio pasada, el remito nace ese mismo día (09:00)
+            fecha_remito = datetime.combine(fecha_inicio, time(9, 0)) if fecha_inicio else None
+            self._asignar_a_remito(ejemplar, sede_origen, sede_destino, fecha_remito)
 
         return prestamo
 
@@ -282,33 +294,90 @@ class GestorBiblioteca:
             self.socio_dao.actualizar_penalizacion(prestamo.socio.id_socio, prestamo.socio.penalizado_hasta)
 
     # --- 5. Trazabilidad de Remitos (Patrón State) ---
+    # Un remito agrupa N ejemplares que viajan juntos de una sede origen a una sede destino (relación 1 a N).
     def obtener_remito(self, id_remito: str) -> Remito:
         remito = next((r for r in self.remitos if r.id_remito == id_remito), None)
         if not remito:
             raise BibliotecaExcepcion(f"Remito '{id_remito}' no encontrado.")
         return remito
 
-    def empaquetar_remito(self, id_remito: str):
+    def buscar_remito_abierto(self, id_sede_origen: str, id_sede_destino: str):
+        """Remito todavía en estado Creado (sin empaquetar) para esa ruta, o None si no hay ninguno."""
+        return next(
+            (
+                r for r in self.remitos
+                if isinstance(r.estado_actual, Creado)
+                and r.sede_origen.id_sede == id_sede_origen
+                and r.sede_destino.id_sede == id_sede_destino
+            ),
+            None
+        )
+
+    def remito_en_curso_de(self, id_ejemplar: str):
+        """Remito aún no recibido en el que viaja el ejemplar, o None si no está en ninguno."""
+        return next(
+            (
+                r for r in reversed(self.remitos)
+                if not isinstance(r.estado_actual, Recibido)
+                and any(e.id_ejemplar == id_ejemplar for e in r.ejemplares)
+            ),
+            None
+        )
+
+    def _asignar_a_remito(
+        self, ejemplar: Ejemplar, sede_origen: Sede, sede_destino: Sede, fecha_hora: datetime = None
+    ) -> Remito:
+        """
+        Agrupa los envíos: si ya hay un remito abierto (Creado) para la misma ruta, suma el ejemplar a ese remito;
+        si no, abre uno nuevo. El remito deja de aceptar ejemplares recién cuando se empaqueta.
+        fecha_hora (opcional) es la fecha de creación si hay que abrir un remito nuevo; por defecto, ahora.
+        """
+        remito = self.buscar_remito_abierto(sede_origen.id_sede, sede_destino.id_sede)
+        if remito:
+            remito.agregar_ejemplar(ejemplar)
+            self.remito_dao.agregar_ejemplar(remito.id_remito, ejemplar.id_ejemplar)
+        else:
+            remito = Remito(self.generar_id_remito(), sede_origen, sede_destino, [ejemplar])
+            if fecha_hora:
+                remito.trazabilidad[0]["fecha_hora"] = fecha_hora
+            self.remito_dao.crear(remito)
+            self.remitos.append(remito)
+        return remito
+
+    def _persistir_ultimo_evento(self, remito: Remito, fecha_hora: datetime = None):
+        """Guarda en la BD el último evento de trazabilidad del remito (con la misma fecha que en memoria)."""
+        evento = remito.trazabilidad[-1]
+        if fecha_hora:
+            evento["fecha_hora"] = fecha_hora
+        self.remito_dao.agregar_trazabilidad(
+            remito.id_remito, evento["estado"], evento["fecha_hora"], evento["observacion"]
+        )
+
+    # fecha_hora es opcional: por defecto el evento queda con la hora actual. Sirve para cargar historial/tests.
+    def empaquetar_remito(self, id_remito: str, fecha_hora: datetime = None):
         remito = self.obtener_remito(id_remito)
         remito.empaquetar()
-        remito.ejemplar.estado_ejemplar = EstadoEjemplar.EN_PREPARACION
-        self.remito_dao.agregar_trazabilidad(id_remito, "Empaquetado", datetime.now(), "Empaquetado")
-        self.ejemplar_dao.actualizar(remito.ejemplar)
+        for ejemplar in remito.ejemplares:
+            ejemplar.estado_ejemplar = EstadoEjemplar.EN_PREPARACION
+            self.ejemplar_dao.actualizar(ejemplar)
+        self._persistir_ultimo_evento(remito, fecha_hora)
 
-    def despachar_remito(self, id_remito: str):
+    def despachar_remito(self, id_remito: str, fecha_hora: datetime = None):
         remito = self.obtener_remito(id_remito)
         remito.despachar()
-        remito.ejemplar.estado_ejemplar = EstadoEjemplar.EN_TRANSITO
-        self.remito_dao.agregar_trazabilidad(id_remito, "Despachado", datetime.now(), "Despachado")
-        self.ejemplar_dao.actualizar(remito.ejemplar)
+        for ejemplar in remito.ejemplares:
+            ejemplar.estado_ejemplar = EstadoEjemplar.EN_TRANSITO
+            self.ejemplar_dao.actualizar(ejemplar)
+        self._persistir_ultimo_evento(remito, fecha_hora)
 
-    def recibir_remito(self, id_remito: str):
+    def recibir_remito(self, id_remito: str, fecha_hora: datetime = None):
         remito = self.obtener_remito(id_remito)
         remito.recibir()
-        remito.ejemplar.sede = remito.sede_destino
-        remito.ejemplar.estado_ejemplar = EstadoEjemplar.PRESTADO
-        self.remito_dao.agregar_trazabilidad(id_remito, "Recibido", datetime.now(), "Recibido")
-        self.ejemplar_dao.actualizar(remito.ejemplar)
+        for ejemplar in remito.ejemplares:
+            ejemplar.sede = remito.sede_destino
+            ejemplar.estado_ejemplar = EstadoEjemplar.PRESTADO
+            self.ejemplar_dao.actualizar(ejemplar)
+        self._persistir_ultimo_evento(remito, fecha_hora)
 
     # --- 6. Consultar Disponibilidad ---
     def consultar_disponibilidad(self, isbn: str, id_sede: str = None):
@@ -353,63 +422,3 @@ class GestorBiblioteca:
         reserva.cancelar()
         self.reserva_dao.actualizar_activa(id_reserva, False)
         return reserva
-
-    # =========================================================================
-    # LOS 4 REPORTES OBLIGATORIOS NO TRIVIALES
-    # =========================================================================
-
-    def reporte_prestamos_activos_y_transito(self):
-        prestamos_activos = [p for p in self.prestamos if p.fecha_devolucion is None]
-        ejemplares_en_transito = [
-            e for e in self.ejemplares.values() 
-            if e.estado_ejemplar == EstadoEjemplar.EN_TRANSITO
-        ]
-        
-        return {
-            "total_prestamos_activos": len(prestamos_activos),
-            "prestamos_activos": prestamos_activos,
-            "total_en_transito": len(ejemplares_en_transito),
-            "ejemplares_en_transito": ejemplares_en_transito
-        }
-
-    def reporte_prestamos_vencidos(self, fecha_referencia: date = None):
-        if fecha_referencia is None:
-            fecha_referencia = date.today()
-
-        vencidos = []
-        for p in self.prestamos:
-            if p.esta_vencido(fecha_referencia):
-                dias_retraso = (fecha_referencia - p.fecha_vencimiento).days
-                vencidos.append({
-                    "prestamo": p,
-                    "dias_retraso": dias_retraso
-                })
-        return {
-            "total_vencidos": len(vencidos),
-            "detalle": vencidos
-        }
-
-    def reporte_disponibilidad_por_sede(self):
-        resumen = {}
-        for sede in self.sedes.values():
-            ejemplares_sede = [e for e in self.ejemplares.values() if e.sede.id_sede == sede.id_sede]
-            disponibles = [e for e in ejemplares_sede if e.esta_disponible()]
-            
-            resumen[sede.nombre] = {
-                "id_sede": sede.id_sede,
-                "total_ejemplares": len(ejemplares_sede),
-                "disponibles": len(disponibles),
-                "no_disponibles": len(ejemplares_sede) - len(disponibles),
-                "activa": sede.activa
-            }
-        return resumen
-
-    def reporte_libros_mas_solicitados_intersedes(self):
-        conteo_por_libro = {}
-        for p in self.prestamos:
-            if p.es_interbibliotecario:
-                titulo = p.ejemplar.libro.titulo
-                conteo_por_libro[titulo] = conteo_por_libro.get(titulo, 0) + 1
-        
-        ranking = sorted(conteo_por_libro.items(), key=lambda item: item[1], reverse=True)
-        return [{"libro": titulo, "solicitudes_intersede": total} for titulo, total in ranking]

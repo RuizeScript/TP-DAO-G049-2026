@@ -1,16 +1,41 @@
 {% extends "base.html" %}
 
-{% block title %}Reportes Obligatorios - BiblioRed{% endblock %}
+{% block title %}Reportes de Gestión - BiblioRed{% endblock %}
 
 {% block content %}
-<div class="d-flex justify-content-between align-items-center mb-4">
+{# --- Componentes reutilizables --- #}
+{% macro kpi(etiqueta, valor, detalle=None, tono='dark') %}
+<div class="col-6 col-md-4 col-xl">
+    <div class="p-3 rounded-4 bg-light border h-100">
+        <div class="text-muted fw-semibold text-uppercase" style="font-size: 0.66rem; letter-spacing: 0.04em;">{{ etiqueta }}</div>
+        <div class="fw-bolder {{ 'fs-6' if valor|string|length > 14 else 'fs-4' }} text-{{ tono }}" style="line-height: 1.25;">{{ valor }}</div>
+        {% if detalle %}<div class="text-muted small">{{ detalle }}</div>{% endif %}
+    </div>
+</div>
+{% endmacro %}
+
+{% macro btn_pdf(endpoint) %}
+<a href="{{ url_for(endpoint) }}" class="btn btn-sm btn-outline-dark" title="Exportar a PDF">
+    <i class="bi bi-file-earmark-pdf"></i> PDF
+</a>
+{% endmacro %}
+
+{% set color_semaforo = {'Vencido': 'danger', 'Por vencer': 'warning', 'En plazo': 'success'} %}
+{% set color_gravedad = {'Leve': 'warning', 'Moderada': 'orange', 'Grave': 'danger'} %}
+{% set color_situacion = {'Holgada': 'success', 'Ajustada': 'warning', 'Crítica': 'danger', 'Inactiva': 'secondary', 'Sin stock': 'secondary'} %}
+{% set color_demanda = {'Alta': 'danger', 'Media': 'warning', 'Baja': 'success'} %}
+
+<div class="d-flex justify-content-between align-items-center mb-4 flex-wrap gap-2">
     <div>
-        <h2 class="fw-bold mb-1">Módulo de Reportes de Gestión</h2>
-        <p class="text-muted mb-0">Los 4 reportes no triviales requeridos por la consigna del trabajo integrador.</p>
+        <h2 class="fw-bold mb-1">Reportes de Gestión</h2>
+        <p class="text-muted mb-0">
+            Indicadores calculados (tasas, promedios, comparaciones y alertas), no listados de datos.
+            Fecha de corte: <strong>{{ hoy.strftime('%d/%m/%Y') }}</strong>.
+        </p>
     </div>
     <div class="d-flex align-items-center gap-2">
         <span class="badge bg-dark fs-6 px-3 py-2">
-            <i class="bi bi-file-earmark-bar-graph me-1"></i> Auditoría y Métricas
+            <i class="bi bi-file-earmark-bar-graph me-1"></i> 6 reportes
         </span>
         <a href="{{ url_for('reporte_pdf_completo') }}" class="btn btn-sm btn-dark">
             <i class="bi bi-file-earmark-pdf me-1"></i> Descargar informe completo (PDF)
@@ -18,54 +43,82 @@
     </div>
 </div>
 
-<div class="row g-4">
-    <!-- Reporte 1: Préstamos Activos y Material en Tránsito -->
-    <div class="col-lg-6">
-        <div class="card shadow-sm h-100 border-top border-4 border-primary">
-            <div class="card-header bg-white py-3 border-0">
-                <div class="d-flex justify-content-between align-items-center">
-                    <h5 class="fw-bold mb-0 text-dark"><i class="bi bi-activity text-primary me-2"></i>Reporte 1: Préstamos Activos y En Tránsito</h5>
-                    <div class="d-flex align-items-center gap-2">
-                        <span class="badge bg-primary">{{ rep1.total_prestamos_activos }} Activos</span>
-                        <a href="{{ url_for('reporte_pdf_activos') }}" class="btn btn-sm btn-outline-dark" title="Exportar a PDF">
-                            <i class="bi bi-file-earmark-pdf"></i>
-                        </a>
-                    </div>
-                </div>
-            </div>
-            <div class="card-body">
-                <h6 class="fw-bold text-muted small text-uppercase">Préstamos en curso:</h6>
-                <div class="table-responsive mb-3">
+<div class="d-flex flex-column gap-4">
+
+<!-- ============ Reporte 1: Préstamos activos y material en tránsito ============ -->
+<div class="card shadow-sm border-top border-4 border-primary" id="reporte-1">
+    <div class="card-header bg-white d-flex justify-content-between align-items-center">
+        <div>
+            <h5 class="fw-bold mb-0 text-dark"><i class="bi bi-activity text-primary me-2"></i>Reporte 1: Préstamos activos y material en tránsito</h5>
+            <small class="text-muted">Semáforo de vencimientos y estado del pipeline logístico.</small>
+        </div>
+        {{ btn_pdf('reporte_pdf_activos') }}
+    </div>
+    <div class="card-body">
+        <div class="row g-3 mb-4">
+            {{ kpi('Préstamos activos', activos.total_activos, activos.interbibliotecarios ~ ' inter-sede · ' ~ activos.locales ~ ' locales') }}
+            {{ kpi('En plazo', activos.en_plazo, None, 'success') }}
+            {{ kpi('Por vencer (≤ 3 días)', activos.por_vencer, None, 'warning') }}
+            {{ kpi('Vencidos', activos.vencidos, activos.pct_vencidos ~ '% de los activos', 'danger') }}
+            {{ kpi('Colección prestada', activos.pct_coleccion_prestada ~ '%', activos.total_activos ~ ' de ' ~ activos.total_ejemplares ~ ' ejemplares') }}
+            {{ kpi('Ejemplares en logística', activos.ejemplares_en_curso, activos.remitos_en_curso ~ ' remito(s) · ' ~ activos.ejemplares_en_transito ~ ' en tránsito') }}
+        </div>
+
+        <div class="row g-4">
+            <div class="col-lg-7">
+                <h6 class="fw-bold text-muted small text-uppercase">Préstamos en curso, del más urgente al menos urgente</h6>
+                <div class="table-responsive">
                     <table class="table table-sm table-hover align-middle mb-0">
                         <thead class="table-light">
-                            <tr>
-                                <th>ID</th>
-                                <th>Socio</th>
-                                <th>Ejemplar</th>
-                                <th>Vence</th>
-                            </tr>
+                            <tr><th>Préstamo</th><th>Socio</th><th>Libro</th><th>Vence</th><th>Situación</th></tr>
                         </thead>
                         <tbody>
-                            {% for p in rep1.prestamos_activos %}
+                            {% for d in activos.detalle %}
                             <tr>
-                                <td class="fw-bold">{{ p.id_prestamo }}</td>
-                                <td>{{ p.socio.nombre }} {{ p.socio.apellido }}</td>
-                                <td>{{ p.ejemplar.libro.titulo }}</td>
-                                <td>{{ p.fecha_vencimiento }}</td>
+                                <td class="fw-bold">{{ d.prestamo.id_prestamo }}</td>
+                                <td>{{ d.prestamo.socio.nombre }} {{ d.prestamo.socio.apellido }}</td>
+                                <td>{{ d.prestamo.ejemplar.libro.titulo }}</td>
+                                <td>{{ d.prestamo.fecha_vencimiento.strftime('%d/%m/%Y') }}</td>
+                                <td>
+                                    <span class="badge bg-{{ color_semaforo[d.semaforo] }}{% if d.semaforo == 'Por vencer' %} text-dark{% endif %}">
+                                        {% if d.dias_restantes < 0 %}Vencido hace {{ -d.dias_restantes }} d
+                                        {% elif d.dias_restantes == 0 %}Vence hoy
+                                        {% else %}Faltan {{ d.dias_restantes }} d{% endif %}
+                                    </span>
+                                </td>
                             </tr>
                             {% else %}
-                            <tr><td colspan="4" class="text-center text-muted">Sin préstamos activos.</td></tr>
+                            <tr><td colspan="5" class="text-center text-muted">Sin préstamos activos.</td></tr>
                             {% endfor %}
                         </tbody>
                     </table>
                 </div>
+            </div>
+            <div class="col-lg-5">
+                <h6 class="fw-bold text-muted small text-uppercase">Pipeline logístico (remitos sin entregar)</h6>
+                <table class="table table-sm align-middle mb-3">
+                    <thead class="table-light"><tr><th>Etapa</th><th class="text-end">Remitos</th><th class="text-end">Ejemplares</th></tr></thead>
+                    <tbody>
+                        {% for e in activos.etapas_logisticas %}
+                        <tr>
+                            <td>{{ e.estado }}</td>
+                            <td class="text-end">{{ e.remitos }}</td>
+                            <td class="text-end fw-bold">{{ e.ejemplares }}</td>
+                        </tr>
+                        {% endfor %}
+                    </tbody>
+                </table>
 
-                <h6 class="fw-bold text-muted small text-uppercase">Material físico actualmente en tránsito: <span class="badge bg-warning text-dark">{{ rep1.total_en_transito }}</span></h6>
+                <h6 class="fw-bold text-muted small text-uppercase">Material en tránsito ahora</h6>
                 <ul class="list-group list-group-flush small">
-                    {% for ej in rep1.ejemplares_en_transito %}
-                    <li class="list-group-item d-flex justify-content-between align-items-center px-0">
-                        <span><strong>{{ ej.id_ejemplar }}</strong> - {{ ej.libro.titulo }}</span>
-                        <span class="badge bg-warning text-dark">En tránsito</span>
+                    {% for e in activos.envios_en_transito %}
+                    <li class="list-group-item px-0">
+                        <div class="d-flex justify-content-between">
+                            <strong>{{ e.remito.id_remito }}</strong>
+                            <span class="badge bg-info text-dark">{{ e.remito.cantidad_ejemplares }} ejemplar(es)</span>
+                        </div>
+                        <div class="text-muted">{{ e.remito.sede_origen.nombre }} &rarr; {{ e.remito.sede_destino.nombre }}
+                            {% if e.dias_en_transito is not none %} · despachado hace {{ e.dias_en_transito }} d{% endif %}</div>
                     </li>
                     {% else %}
                     <li class="list-group-item text-muted px-0">No hay material en tránsito actualmente.</li>
@@ -74,144 +127,330 @@
             </div>
         </div>
     </div>
+</div>
 
-    <!-- Reporte 2: Préstamos Vencidos y Días de Mora -->
-    <div class="col-lg-6">
-        <div class="card shadow-sm h-100 border-top border-4 border-danger">
-            <div class="card-header bg-white py-3 border-0">
-                <div class="d-flex justify-content-between align-items-center">
-                    <h5 class="fw-bold mb-0 text-dark"><i class="bi bi-calendar-x text-danger me-2"></i>Reporte 2: Préstamos Vencidos y Mora</h5>
-                    <div class="d-flex align-items-center gap-2">
-                        <span class="badge bg-danger">{{ rep2.total_vencidos }} Vencidos</span>
-                        <a href="{{ url_for('reporte_pdf_vencidos') }}" class="btn btn-sm btn-outline-dark" title="Exportar a PDF">
-                            <i class="bi bi-file-earmark-pdf"></i>
-                        </a>
-                    </div>
-                </div>
-            </div>
-            <div class="card-body">
-                <p class="small text-muted mb-2">Calculado a la fecha de corte actual ({{ hoy }}).</p>
+<!-- ============ Reporte 2: Morosidad y sanciones acumuladas ============ -->
+<div class="card shadow-sm border-top border-4 border-danger" id="reporte-2">
+    <div class="card-header bg-white d-flex justify-content-between align-items-center">
+        <div>
+            <h5 class="fw-bold mb-0 text-dark"><i class="bi bi-calendar-x text-danger me-2"></i>Reporte 2: Morosidad y sanciones acumuladas</h5>
+            <small class="text-muted">Sanción vigente: 2 días de inhabilitación por cada día de retraso en la devolución.</small>
+        </div>
+        {{ btn_pdf('reporte_pdf_vencidos') }}
+    </div>
+    <div class="card-body">
+        <div class="row g-3 mb-4">
+            {{ kpi('Préstamos vencidos', morosidad.total_vencidos, morosidad.por_gravedad['Grave'] ~ ' grave(s) · ' ~ morosidad.por_gravedad['Moderada'] ~ ' moderada(s) · ' ~ morosidad.por_gravedad['Leve'] ~ ' leve(s)', 'danger') }}
+            {{ kpi('Mora promedio', morosidad.mora_promedio ~ ' días', 'máxima: ' ~ morosidad.mora_maxima ~ ' días') }}
+            {{ kpi('Sanción proyectada', morosidad.sancion_proyectada_total ~ ' días', 'si todos devolvieran hoy') }}
+            {{ kpi('Incumplimiento histórico', morosidad.tasa_incumplimiento ~ '%', 'sobre ' ~ morosidad.total_resueltos ~ ' préstamos resueltos (' ~ morosidad.devueltos_tarde ~ ' devueltos tarde)', 'danger' if morosidad.tasa_incumplimiento >= 25 else 'dark') }}
+            {{ kpi('Socios sancionados', morosidad.sancionados|length, morosidad.pct_socios_sancionados ~ '% del padrón') }}
+        </div>
+
+        <div class="row g-4">
+            <div class="col-lg-7">
+                <h6 class="fw-bold text-muted small text-uppercase">Préstamos vencidos con su sanción proyectada</h6>
                 <div class="table-responsive">
                     <table class="table table-sm table-hover align-middle mb-0">
                         <thead class="table-light">
-                            <tr>
-                                <th>Préstamo</th>
-                                <th>Socio</th>
-                                <th>Fecha Vencimiento</th>
-                                <th>Días de Mora</th>
-                            </tr>
+                            <tr><th>Préstamo</th><th>Socio</th><th>Libro</th><th>Mora</th><th>Gravedad</th><th>Sanción si devuelve hoy</th></tr>
                         </thead>
                         <tbody>
-                            {% for item in rep2.detalle %}
-                            <tr class="table-danger">
-                                <td class="fw-bold">{{ item.prestamo.id_prestamo }}</td>
-                                <td>{{ item.prestamo.socio.nombre }} {{ item.prestamo.socio.apellido }}</td>
-                                <td>{{ item.prestamo.fecha_vencimiento }}</td>
-                                <td><span class="badge bg-danger">{{ item.dias_retraso }} días</span></td>
+                            {% for d in morosidad.detalle %}
+                            <tr>
+                                <td class="fw-bold">{{ d.prestamo.id_prestamo }}</td>
+                                <td>{{ d.prestamo.socio.nombre }} {{ d.prestamo.socio.apellido }}</td>
+                                <td>{{ d.prestamo.ejemplar.libro.titulo }}</td>
+                                <td><span class="badge bg-danger">{{ d.dias_retraso }} días</span></td>
+                                <td><span class="badge bg-{{ color_gravedad[d.gravedad] }}{% if d.gravedad == 'Leve' %} text-dark{% endif %}"
+                                          {% if d.gravedad == 'Moderada' %}style="background-color: #fd7e14 !important;"{% endif %}>{{ d.gravedad }}</span></td>
+                                <td class="small">{{ d.sancion_dias }} días<br><span class="text-muted">hasta {{ d.sancion_hasta.strftime('%d/%m/%Y') }}</span></td>
                             </tr>
                             {% else %}
-                            <tr>
-                                <td colspan="4" class="text-center py-3 text-muted">
-                                    <i class="bi bi-check-circle text-success me-1"></i> No se registran préstamos vencidos impagos.
-                                </td>
-                            </tr>
+                            <tr><td colspan="6" class="text-center py-3 text-muted">
+                                <i class="bi bi-check-circle text-success me-1"></i> No hay préstamos vencidos.
+                            </td></tr>
                             {% endfor %}
                         </tbody>
                     </table>
                 </div>
+
+                {% if morosidad.por_socio|length > 0 %}
+                <h6 class="fw-bold text-muted small text-uppercase mt-4">Mora acumulada por socio</h6>
+                <table class="table table-sm align-middle mb-0">
+                    <thead class="table-light"><tr><th>Socio</th><th class="text-end">Préstamos vencidos</th><th class="text-end">Mora acumulada</th><th class="text-end">Mora máxima</th></tr></thead>
+                    <tbody>
+                        {% for f in morosidad.por_socio %}
+                        <tr>
+                            <td>{{ f.socio.nombre }} {{ f.socio.apellido }}</td>
+                            <td class="text-end">{{ f.prestamos_vencidos }}</td>
+                            <td class="text-end fw-bold">{{ f.mora_acumulada }} días</td>
+                            <td class="text-end">{{ f.mora_maxima }} días</td>
+                        </tr>
+                        {% endfor %}
+                    </tbody>
+                </table>
+                {% endif %}
+            </div>
+            <div class="col-lg-5">
+                <h6 class="fw-bold text-muted small text-uppercase">Sanciones vigentes hoy</h6>
+                <ul class="list-group list-group-flush small">
+                    {% for s in morosidad.sancionados %}
+                    <li class="list-group-item px-0 d-flex justify-content-between align-items-center">
+                        <span><strong>{{ s.socio.nombre }} {{ s.socio.apellido }}</strong><br>
+                            <span class="text-muted">inhabilitado hasta {{ s.hasta.strftime('%d/%m/%Y') }}</span></span>
+                        <span class="badge bg-secondary">{{ s.dias_restantes }} d restantes</span>
+                    </li>
+                    {% else %}
+                    <li class="list-group-item text-muted px-0">No hay socios sancionados.</li>
+                    {% endfor %}
+                </ul>
             </div>
         </div>
     </div>
+</div>
 
-    <!-- Reporte 3: Disponibilidad de Catálogo por Sede -->
-    <div class="col-lg-6">
-        <div class="card shadow-sm h-100 border-top border-4 border-success">
-            <div class="card-header bg-white py-3 border-0">
-                <div class="d-flex justify-content-between align-items-center">
-                    <h5 class="fw-bold mb-0 text-dark"><i class="bi bi-pie-chart text-success me-2"></i>Reporte 3: Disponibilidad de Catálogo por Sede</h5>
-                    <a href="{{ url_for('reporte_pdf_disponibilidad') }}" class="btn btn-sm btn-outline-dark" title="Exportar a PDF">
-                        <i class="bi bi-file-earmark-pdf"></i>
-                    </a>
+<!-- ============ Reporte 3: Demanda de libros inter-sedes ============ -->
+<div class="card shadow-sm border-top border-4 border-warning" id="reporte-3">
+    <div class="card-header bg-white d-flex justify-content-between align-items-center">
+        <div>
+            <h5 class="fw-bold mb-0 text-dark"><i class="bi bi-trophy text-warning me-2"></i>Reporte 3: Demanda de libros en préstamos inter-sedes</h5>
+            <small class="text-muted">Qué títulos se piden más entre sedes, contrastado con cuántos ejemplares tiene la red.</small>
+        </div>
+        {{ btn_pdf('reporte_pdf_intersedes') }}
+    </div>
+    <div class="card-body">
+        <div class="row g-3 mb-4">
+            {{ kpi('Préstamos inter-sede', demanda.total_intersede, demanda.pct_intersede ~ '% de los ' ~ demanda.total_prestamos ~ ' préstamos') }}
+            {{ kpi('Títulos distintos pedidos', demanda.titulos_distintos) }}
+            {{ kpi('Concentración top 3', demanda.concentracion_top3 ~ '%', 'de la demanda inter-sede') }}
+            {{ kpi('Títulos con demanda alta', demanda.titulos_demanda_alta, '≥ 1 solicitud por ejemplar', 'danger' if demanda.titulos_demanda_alta else 'dark') }}
+        </div>
+        <div class="table-responsive">
+            <table class="table table-hover align-middle mb-0">
+                <thead class="table-light">
+                    <tr>
+                        <th>#</th><th>Título</th><th style="min-width: 150px;">Solicitudes</th>
+                        <th>Ejemplares (disp./total)</th><th>Solicitudes por ejemplar</th>
+                        <th>Reservas activas</th><th>Ruta más frecuente</th><th>Demanda</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for f in demanda.ranking %}
+                    <tr>
+                        <td class="fw-bold">#{{ f.posicion }}</td>
+                        <td class="fw-semibold">{{ f.libro.titulo }}</td>
+                        <td>
+                            <div class="d-flex align-items-center gap-2">
+                                <span class="fw-bold">{{ f.solicitudes }}</span>
+                                <div class="progress flex-grow-1" style="height: 8px;"><div class="progress-bar bg-warning" style="width: {{ f.pct_del_total }}%"></div></div>
+                                <span class="small text-muted">{{ f.pct_del_total }}%</span>
+                            </div>
+                        </td>
+                        <td>{{ f.ejemplares_disponibles }} / {{ f.ejemplares_red }}</td>
+                        <td>{{ f.solicitudes_por_ejemplar if f.solicitudes_por_ejemplar is not none else '—' }}</td>
+                        <td>{{ f.reservas_activas }}</td>
+                        <td class="small">{{ f.ruta_principal }}</td>
+                        <td><span class="badge bg-{{ color_demanda[f.nivel_demanda] }}{% if f.nivel_demanda == 'Media' %} text-dark{% endif %}">{{ f.nivel_demanda }}</span></td>
+                    </tr>
+                    {% else %}
+                    <tr><td colspan="8" class="text-center py-3 text-muted">No hay solicitudes interbibliotecarias registradas aún.</td></tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+    </div>
+</div>
+
+<!-- ============ Reporte 4: Disponibilidad de catálogo por sede ============ -->
+<div class="card shadow-sm border-top border-4 border-success" id="reporte-4">
+    <div class="card-header bg-white d-flex justify-content-between align-items-center">
+        <div>
+            <h5 class="fw-bold mb-0 text-dark"><i class="bi bi-pie-chart text-success me-2"></i>Reporte 4: Disponibilidad de catálogo por sede</h5>
+            <small class="text-muted">Qué tan holgado o ajustado está el stock de cada sede (ordenadas de más a menos comprometida).</small>
+        </div>
+        {{ btn_pdf('reporte_pdf_disponibilidad') }}
+    </div>
+    <div class="card-body">
+        <div class="row g-3 mb-4">
+            {{ kpi('Disponibilidad de la red', disponibilidad.tasa_red ~ '%', disponibilidad.disponibles_red ~ ' de ' ~ disponibilidad.total_ejemplares ~ ' ejemplares') }}
+            {{ kpi('Sedes en situación crítica', disponibilidad.sedes_criticas, '< 30% disponible', 'danger' if disponibilidad.sedes_criticas else 'dark') }}
+            {{ kpi('Títulos agotados en toda la red', disponibilidad.titulos_agotados_red|length, 'ninguna copia libre', 'danger' if disponibilidad.titulos_agotados_red else 'dark') }}
+            {{ kpi('Ejemplares deteriorados o dañados', disponibilidad.ejemplares_deteriorados) }}
+        </div>
+        <div class="table-responsive">
+            <table class="table table-hover align-middle mb-0">
+                <thead class="table-light">
+                    <tr>
+                        <th>Sede</th><th>Total</th><th style="min-width: 170px;">Disponibilidad</th>
+                        <th>Prestados</th><th>En preparación</th><th>En tránsito</th><th>Reservados</th>
+                        <th>Títulos agotados en la sede</th><th>Cobertura del catálogo</th><th>Deteriorados</th><th>Situación</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for s in disponibilidad.sedes %}
+                    {% set tono = color_situacion[s.situacion] %}
+                    <tr>
+                        <td class="fw-bold">{{ s.sede.nombre }}</td>
+                        <td>{{ s.total }}</td>
+                        <td>
+                            <div class="d-flex align-items-center gap-2">
+                                <div class="progress flex-grow-1" style="height: 8px;"><div class="progress-bar bg-{{ tono }}" style="width: {{ s.tasa_disponibilidad }}%"></div></div>
+                                <span class="small fw-bold">{{ s.tasa_disponibilidad }}%</span>
+                            </div>
+                            <div class="small text-muted">{{ s.disponibles }} disponibles</div>
+                        </td>
+                        <td>{{ s.por_estado['Prestado'] }}</td>
+                        <td>{{ s.por_estado['En preparación'] }}</td>
+                        <td>{{ s.por_estado['En tránsito'] }}</td>
+                        <td>{{ s.por_estado['Reservado'] }}</td>
+                        <td>{{ s.titulos_agotados }} de {{ s.titulos }}</td>
+                        <td>{{ s.cobertura_catalogo }}%</td>
+                        <td>{{ s.ejemplares_deteriorados }}</td>
+                        <td><span class="badge bg-{{ tono }}{% if s.situacion == 'Ajustada' %} text-dark{% endif %}">{{ s.situacion }}</span></td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+        {% if disponibilidad.titulos_agotados_red %}
+        <div class="mt-3">
+            <span class="small fw-bold text-muted text-uppercase">Títulos sin ninguna copia disponible en la red:</span>
+            {% for l in disponibilidad.titulos_agotados_red %}
+            <span class="badge bg-danger-subtle text-danger border border-danger-subtle">{{ l.titulo }}</span>
+            {% endfor %}
+        </div>
+        {% endif %}
+    </div>
+</div>
+
+<!-- ============ Reporte 5: Efectividad logística ============ -->
+<div class="card shadow-sm border-top border-4 border-info" id="reporte-5">
+    <div class="card-header bg-white d-flex justify-content-between align-items-center">
+        <div>
+            <h5 class="fw-bold mb-0 text-dark"><i class="bi bi-truck text-info me-2"></i>Reporte 5: Efectividad logística e incidencias</h5>
+            <small class="text-muted">Éxito = remito entregado dentro de 3 días de tránsito. Incidencia = entrega tardía o remito sin avanzar más de 3 días.</small>
+        </div>
+        {{ btn_pdf('reporte_pdf_logistica') }}
+    </div>
+    <div class="card-body">
+        <div class="row g-3 mb-4">
+            {{ kpi('Tasa de éxito', logistica.tasa_exito ~ '%', logistica.entregados_a_tiempo ~ ' entregas a tiempo', 'success' if logistica.tasa_exito >= 80 else 'danger') }}
+            {{ kpi('Remitos entregados', logistica.recibidos ~ ' / ' ~ logistica.total_remitos, logistica.tasa_entrega ~ '% completado · ' ~ logistica.en_curso ~ ' en curso') }}
+            {{ kpi('Incidencias', logistica.total_incidencias, logistica.entregas_tardias ~ ' entregas tardías · ' ~ logistica.estancados ~ ' estancados', 'danger' if logistica.total_incidencias else 'dark') }}
+            {{ kpi('Ejemplares por remito', logistica.ejemplares_por_remito, logistica.ejemplares_enviados ~ ' ejemplares en ' ~ logistica.total_remitos ~ ' remitos') }}
+            {{ kpi('Envíos evitados', logistica.envios_evitados, logistica.pct_envios_evitados ~ '% menos viajes gracias al agrupamiento', 'success') }}
+        </div>
+
+        <div class="row g-4">
+            <div class="col-lg-6">
+                <h6 class="fw-bold text-muted small text-uppercase">Tiempo promedio por etapa</h6>
+                <table class="table table-sm align-middle mb-0">
+                    <thead class="table-light"><tr><th>Etapa</th><th class="text-end">Remitos medidos</th><th class="text-end">Promedio</th><th class="text-end">Máximo</th></tr></thead>
+                    <tbody>
+                        {% for t in logistica.tiempos_por_etapa %}
+                        <tr>
+                            <td>{{ t.etapa }}</td>
+                            <td class="text-end">{{ t.remitos }}</td>
+                            <td class="text-end fw-bold">{{ t.promedio_s|duracion }}</td>
+                            <td class="text-end">{{ t.maximo_s|duracion }}</td>
+                        </tr>
+                        {% endfor %}
+                    </tbody>
+                </table>
+                <div class="d-flex flex-wrap gap-2 mt-3">
+                    {% for estado, cantidad in logistica.remitos_por_estado.items() %}
+                    <span class="badge bg-light text-dark border">{{ estado }}: {{ cantidad }}</span>
+                    {% endfor %}
                 </div>
             </div>
-            <div class="card-body">
-                <div class="table-responsive">
-                    <table class="table table-hover align-middle mb-0">
-                        <thead class="table-light">
-                            <tr>
-                                <th>Sede</th>
-                                <th>Total Ejemplares</th>
-                                <th>Disponibles</th>
-                                <th>Prestados / Tránsito</th>
-                                <th>Estado Sede</th>
-                            </tr>
-                        </thead>
-                        <tbody>
-                            {% for nombre_sede, datos in rep3.items() %}
-                            <tr>
-                                <td class="fw-bold">{{ nombre_sede }}</td>
-                                <td>{{ datos.total_ejemplares }}</td>
-                                <td><span class="badge bg-success">{{ datos.disponibles }}</span></td>
-                                <td><span class="badge bg-secondary">{{ datos.no_disponibles }}</span></td>
-                                <td>
-                                    {% if datos.activa %}
-                                        <span class="text-success small fw-medium">Activa</span>
-                                    {% else %}
-                                        <span class="text-danger small fw-medium">Inactiva</span>
-                                    {% endif %}
-                                </td>
-                            </tr>
-                            {% endfor %}
-                        </tbody>
-                    </table>
-                </div>
+            <div class="col-lg-6">
+                <h6 class="fw-bold text-muted small text-uppercase">Incidencias detectadas</h6>
+                <ul class="list-group list-group-flush small">
+                    {% for i in logistica.incidencias %}
+                    <li class="list-group-item px-0 d-flex justify-content-between align-items-start">
+                        <span><strong>{{ i.remito.id_remito }}</strong> · {{ i.remito.sede_origen.nombre }} &rarr; {{ i.remito.sede_destino.nombre }}<br>
+                            <span class="text-muted">{{ i.detalle }}</span></span>
+                        <span class="badge bg-{{ 'danger' if i.tipo == 'Estancado' else 'warning text-dark' }}">{{ i.tipo }}</span>
+                    </li>
+                    {% else %}
+                    <li class="list-group-item text-muted px-0"><i class="bi bi-check-circle text-success me-1"></i> Sin incidencias: todos los envíos van en tiempo y forma.</li>
+                    {% endfor %}
+                </ul>
             </div>
         </div>
     </div>
+</div>
 
-    <!-- Reporte 4: Libros Más Solicitados para Préstamos Inter-Sedes -->
-    <div class="col-lg-6">
-        <div class="card shadow-sm h-100 border-top border-4 border-warning">
-            <div class="card-header bg-white py-3 border-0">
-                <div class="d-flex justify-content-between align-items-center">
-                    <h5 class="fw-bold mb-0 text-dark"><i class="bi bi-trophy text-warning me-2"></i>Reporte 4: Ranking Préstamos Inter-Sedes</h5>
-                    <a href="{{ url_for('reporte_pdf_intersedes') }}" class="btn btn-sm btn-outline-dark" title="Exportar a PDF">
-                        <i class="bi bi-file-earmark-pdf"></i>
-                    </a>
-                </div>
-            </div>
-            <div class="card-body">
-                <p class="small text-muted mb-2">Títulos con mayor demanda logística entre sedes diferentes.</p>
+<!-- ============ Reporte 6: Movimiento de ejemplares entre sedes ============ -->
+<div class="card shadow-sm border-top border-4 border-dark" id="reporte-6">
+    <div class="card-header bg-white d-flex justify-content-between align-items-center">
+        <div>
+            <h5 class="fw-bold mb-0 text-dark"><i class="bi bi-arrow-left-right text-dark me-2"></i>Reporte 6: Movimiento de ejemplares entre sedes</h5>
+            <small class="text-muted">Envíos por ruta, tiempo promedio de tránsito y balance de ejemplares enviados vs. recibidos por sede.</small>
+        </div>
+        {{ btn_pdf('reporte_pdf_movimiento') }}
+    </div>
+    <div class="card-body">
+        <div class="row g-3 mb-4">
+            {{ kpi('Ejemplares movidos', movimiento.total_ejemplares, movimiento.total_remitos ~ ' remito(s)') }}
+            {{ kpi('Rutas activas', movimiento.rutas_activas) }}
+            {{ kpi('Ruta principal', (movimiento.ruta_principal.origen.nombre ~ ' → ' ~ movimiento.ruta_principal.destino.nombre) if movimiento.ruta_principal else '—', (movimiento.ruta_principal.ejemplares ~ ' ejemplares') if movimiento.ruta_principal else None) }}
+            {{ kpi('Tránsito promedio', movimiento.transito_promedio_s|duracion, 'Despachado → Recibido') }}
+            {{ kpi('Sede más emisora', movimiento.sede_mas_emisora.sede.nombre if movimiento.sede_mas_emisora else '—', ('saldo ' ~ movimiento.sede_mas_emisora.saldo) if movimiento.sede_mas_emisora else None) }}
+            {{ kpi('Sede más receptora', movimiento.sede_mas_receptora.sede.nombre if movimiento.sede_mas_receptora else '—', ('saldo +' ~ movimiento.sede_mas_receptora.saldo) if movimiento.sede_mas_receptora else None) }}
+        </div>
+
+        <div class="row g-4">
+            <div class="col-lg-6">
+                <h6 class="fw-bold text-muted small text-uppercase">Envíos por ruta</h6>
                 <div class="table-responsive">
-                    <table class="table table-hover align-middle mb-0">
+                    <table class="table table-sm table-hover align-middle mb-0">
                         <thead class="table-light">
-                            <tr>
-                                <th># Ranking</th>
-                                <th>Título del Libro</th>
-                                <th>Solicitudes Inter-Sedes</th>
-                            </tr>
+                            <tr><th>Origen &rarr; Destino</th><th class="text-end">Remitos</th><th class="text-end">Ejemplares</th><th class="text-end">Ej. por remito</th><th class="text-end">Entregados</th><th class="text-end">Tránsito prom.</th></tr>
                         </thead>
                         <tbody>
-                            {% for item in rep4 %}
+                            {% for r in movimiento.rutas %}
                             <tr>
-                                <td class="fw-bold">#{{ loop.index }}</td>
-                                <td class="fw-semibold">{{ item.libro }}</td>
-                                <td>
-                                    <span class="badge bg-warning text-dark fs-6">{{ item.solicitudes_intersede }} envíos</span>
-                                </td>
+                                <td class="fw-semibold">{{ r.origen.nombre }} &rarr; {{ r.destino.nombre }}</td>
+                                <td class="text-end">{{ r.remitos }}</td>
+                                <td class="text-end fw-bold">{{ r.ejemplares }}</td>
+                                <td class="text-end">{{ r.ejemplares_por_remito }}</td>
+                                <td class="text-end">{{ r.entregados }}</td>
+                                <td class="text-end">{{ r.transito_promedio_s|duracion }}</td>
                             </tr>
                             {% else %}
-                            <tr>
-                                <td colspan="3" class="text-center py-3 text-muted">
-                                    No hay solicitudes interbibliotecarias registradas aún.
-                                </td>
-                            </tr>
+                            <tr><td colspan="6" class="text-center py-3 text-muted">Todavía no hay remitos.</td></tr>
                             {% endfor %}
                         </tbody>
                     </table>
                 </div>
             </div>
+            <div class="col-lg-6">
+                <h6 class="fw-bold text-muted small text-uppercase">Balance por sede (recibidos − enviados)</h6>
+                <table class="table table-sm align-middle mb-0">
+                    <thead class="table-light">
+                        <tr><th>Sede</th><th class="text-end">Enviados</th><th class="text-end">Recibidos</th><th class="text-end">Saldo</th><th>Perfil</th></tr>
+                    </thead>
+                    <tbody>
+                        {% for b in movimiento.balance_sedes %}
+                        <tr>
+                            <td>{{ b.sede.nombre }}
+                                {% if b.por_salir or b.en_camino %}<div class="small text-muted">{{ b.por_salir }} por salir · {{ b.en_camino }} en camino</div>{% endif %}</td>
+                            <td class="text-end">{{ b.enviados }}</td>
+                            <td class="text-end">{{ b.recibidos }}</td>
+                            <td class="text-end fw-bold {% if b.saldo < 0 %}text-danger{% elif b.saldo > 0 %}text-success{% endif %}">{{ '%+d'|format(b.saldo) }}</td>
+                            <td><span class="badge bg-light text-dark border">{{ b.perfil }}</span></td>
+                        </tr>
+                        {% else %}
+                        <tr><td colspan="5" class="text-center py-3 text-muted">Sin movimientos.</td></tr>
+                        {% endfor %}
+                    </tbody>
+                </table>
+            </div>
         </div>
     </div>
+</div>
+
 </div>
 {% endblock %}

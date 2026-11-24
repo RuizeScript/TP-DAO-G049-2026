@@ -131,13 +131,90 @@ def test_prestamo_reserva_remito_dao(temp_db):
 
     # RemitoDAO
     remito_dao = RemitoDAO(temp_db)
-    remito = Remito("REM-PREST-001", ej, sede1, sede2)
+    remito = Remito("REM-001", sede1, sede2, [ej])
     remito_dao.crear(remito)
-    remito_dao.agregar_trazabilidad("REM-PREST-001", "Empaquetado", datetime.now(), "Empaquetado para despacho")
-    
-    traz = remito_dao.obtener_trazabilidad("REM-PREST-001")
+    remito_dao.agregar_trazabilidad("REM-001", "Empaquetado", datetime.now(), "Empaquetado para despacho")
+
+    traz = remito_dao.obtener_trazabilidad("REM-001")
     assert len(traz) == 2
     assert traz[1]["estado"] == "Empaquetado"
+
+
+def test_remito_dao_guarda_y_recupera_varios_ejemplares(temp_db):
+    sede_dao, libro_dao, ej_dao = SedeDAO(temp_db), LibroDAO(temp_db), EjemplarDAO(temp_db)
+    sede1, sede2 = Sede("SED-01", "Central", activa=True), Sede("SED-02", "Norte", activa=True)
+    sede_dao.crear(sede1)
+    sede_dao.crear(sede2)
+    libro = Libro("978-03", "Dune", "Frank Herbert", "Sci-Fi", "Ace")
+    libro_dao.crear(libro)
+    ejemplares = [Ejemplar(f"EJ-0{i}", libro=libro, sede=sede1) for i in range(1, 4)]
+    for e in ejemplares:
+        ej_dao.crear(e)
+
+    remito_dao = RemitoDAO(temp_db)
+    remito = Remito("REM-001", sede1, sede2, ejemplares[:2])
+    remito_dao.crear(remito)
+    # El tercer ejemplar se suma después, con el remito todavía Creado
+    remito_dao.agregar_ejemplar("REM-001", "EJ-03")
+
+    assert remito_dao.obtener_ids_ejemplares("REM-001") == ["EJ-01", "EJ-02", "EJ-03"]
+
+    recuperado = remito_dao.obtener_por_id(
+        "REM-001",
+        ejemplares_dict={e.id_ejemplar: e for e in ejemplares},
+        sedes_dict={"SED-01": sede1, "SED-02": sede2},
+    )
+    assert recuperado.cantidad_ejemplares == 3
+    assert recuperado.sede_origen.id_sede == "SED-01"
+    assert recuperado.sede_destino.id_sede == "SED-02"
+
+
+def test_migracion_esquema_viejo_de_remitos_conserva_datos(tmp_path):
+    """Una BD creada con 'remitos.id_ejemplar' (1 remito = 1 ejemplar) pasa al esquema 1 a N sin perder nada."""
+    import sqlite3
+    db = str(tmp_path / "vieja.db")
+    inicializar_bd(db)  # crea todo con el esquema nuevo...
+    with sqlite3.connect(db) as cx:  # ...y lo reemplazamos por el esquema viejo
+        cx.execute("PRAGMA foreign_keys = OFF;")
+        cx.execute("DROP TABLE remito_ejemplares")
+        cx.execute("DROP TABLE remitos")
+        cx.execute("""
+            CREATE TABLE remitos (
+                id_remito TEXT PRIMARY KEY,
+                id_ejemplar TEXT NOT NULL,
+                id_sede_origen TEXT NOT NULL,
+                id_sede_destino TEXT NOT NULL,
+                estado_actual TEXT NOT NULL,
+                FOREIGN KEY (id_ejemplar) REFERENCES ejemplares (id_ejemplar),
+                FOREIGN KEY (id_sede_origen) REFERENCES sedes (id_sede),
+                FOREIGN KEY (id_sede_destino) REFERENCES sedes (id_sede)
+            )
+        """)
+        cx.execute("INSERT INTO sedes (id_sede, nombre) VALUES ('SED-01', 'Central'), ('SED-02', 'Norte')")
+        cx.execute("INSERT INTO libros (isbn, titulo, autor) VALUES ('978-X', 'Dune', 'Herbert')")
+        cx.execute("""INSERT INTO ejemplares (id_ejemplar, isbn, id_sede, estado_ejemplar, estado)
+                      VALUES ('EJ-01', '978-X', 'SED-01', 'PRESTADO', 'OPTIMO')""")
+        cx.execute("INSERT INTO remitos VALUES ('REM-PREST-102', 'EJ-01', 'SED-01', 'SED-02', 'Despachado')")
+        cx.execute("""INSERT INTO remito_trazabilidad (id_remito, estado, fecha_hora, observacion)
+                      VALUES ('REM-PREST-102', 'Creado', '2026-01-01T10:00:00', 'Creado')""")
+
+    inicializar_bd(db)  # <- dispara la migración
+
+    with sqlite3.connect(db) as cx:
+        columnas = [f[1] for f in cx.execute("PRAGMA table_info(remitos)")]
+        assert "id_ejemplar" not in columnas
+        assert cx.execute("SELECT id_remito, id_sede_origen, id_sede_destino, estado_actual FROM remitos").fetchall() \
+            == [("REM-PREST-102", "SED-01", "SED-02", "Despachado")]
+        assert cx.execute("SELECT id_remito, id_ejemplar FROM remito_ejemplares").fetchall() \
+            == [("REM-PREST-102", "EJ-01")]
+        assert cx.execute("SELECT COUNT(*) FROM remito_trazabilidad").fetchone()[0] == 1
+        # Las FK de la trazabilidad siguen apuntando a la tabla 'remitos' y no quedó ninguna fila huérfana
+        assert [f[2] for f in cx.execute("PRAGMA foreign_key_list(remito_trazabilidad)")] == ["remitos"]
+        assert cx.execute("PRAGMA foreign_key_check").fetchall() == []
+
+    inicializar_bd(db)  # idempotente: correrla de nuevo no rompe ni duplica nada
+    with sqlite3.connect(db) as cx:
+        assert cx.execute("SELECT COUNT(*) FROM remito_ejemplares").fetchone()[0] == 1
 
 
 def test_persistencia_recarga_en_gestor():

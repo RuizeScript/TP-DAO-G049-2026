@@ -7,6 +7,10 @@ from models.excepciones import (
 )
 from models.entidades import Socio, Libro, Ejemplar, Sede
 
+# Regla de sanción: por cada día de retraso en la devolución, el socio queda inhabilitado este múltiplo de días.
+# (se define acá para que la use tanto la devolución como el reporte de morosidad)
+FACTOR_SANCION_POR_MORA = 2
+
 
 class Prestamo:
     def __init__(
@@ -78,7 +82,7 @@ class Prestamo:
         # Si se devolvió pasado el vencimiento, aplicamos sanción
         if fecha_devolucion > self.fecha_vencimiento:
             dias_retraso = (fecha_devolucion - self.fecha_vencimiento).days
-            self.socio.penalizado_hasta = fecha_devolucion + timedelta(days=dias_retraso * 2)
+            self.socio.penalizado_hasta = fecha_devolucion + timedelta(days=dias_retraso * FACTOR_SANCION_POR_MORA)
 
     def __str__(self) -> str:
         return f"Préstamo {self.id_prestamo}: Socio {self.socio.dni}, Ejemplar {self.ejemplar.id_ejemplar}, Vence: {self.fecha_vencimiento}"

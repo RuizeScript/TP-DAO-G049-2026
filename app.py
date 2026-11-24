@@ -5,14 +5,17 @@ from models.datos_demo import cargar_datos_iniciales
 from models.entidades import Sede, Socio, Libro, Ejemplar
 from models.enum import Estado
 from models.excepciones import BibliotecaExcepcion, TransicionInvalidaError
+from models.reportes import Reportes, formatear_duracion
 import reportes_pdf
 
 app = Flask(__name__)
 app.secret_key = "dao_biblioteca_secret_key_2026"
+app.jinja_env.filters["duracion"] = formatear_duracion   # {{ segundos|duracion }} -> "2 d 7 h"
 
 # Instanciamos el Gestor (Singleton) y cargamos datos demostrativos
 gestor = GestorBiblioteca()
 cargar_datos_iniciales(gestor)
+generador_reportes = Reportes(gestor)
 
 
 # -------------------------------------------------------------------------
@@ -195,7 +198,10 @@ def prestamos():
             )
             msg = f"Préstamo '{p.id_prestamo}' registrado con éxito."
             if p.es_interbibliotecario:
-                msg += f" (Se generó remito interbibliotecario REM-{p.id_prestamo})"
+                remito = gestor.remito_en_curso_de(p.ejemplar.id_ejemplar)
+                msg += (f" El ejemplar viaja en el remito {remito.id_remito} "
+                        f"({remito.sede_origen.nombre} → {remito.sede_destino.nombre}), "
+                        f"que ahora lleva {remito.cantidad_ejemplares} ejemplar(es).")
             flash(msg, "success")
         except BibliotecaExcepcion as e:
             flash(f"Error al registrar préstamo: {e}", "danger")
@@ -266,7 +272,8 @@ def remitos():
 def empaquetar(id_remito):
     try:
         gestor.empaquetar_remito(id_remito)
-        flash(f"Remito '{id_remito}' empaquetado. Ejemplar en preparación.", "success")
+        n = gestor.obtener_remito(id_remito).cantidad_ejemplares
+        flash(f"Remito '{id_remito}' empaquetado. {n} ejemplar(es) en preparación; ya no admite más ejemplares.", "success")
     except TransicionInvalidaError as e:
         flash(f"Error de transición State: {e}", "danger")
     except BibliotecaExcepcion as e:
@@ -278,7 +285,8 @@ def empaquetar(id_remito):
 def despachar(id_remito):
     try:
         gestor.despachar_remito(id_remito)
-        flash(f"Remito '{id_remito}' despachado. Ejemplar en tránsito.", "info")
+        n = gestor.obtener_remito(id_remito).cantidad_ejemplares
+        flash(f"Remito '{id_remito}' despachado. {n} ejemplar(es) en tránsito.", "info")
     except TransicionInvalidaError as e:
         flash(f"Error de transición State: {e}", "danger")
     except BibliotecaExcepcion as e:
@@ -290,7 +298,8 @@ def despachar(id_remito):
 def recibir(id_remito):
     try:
         gestor.recibir_remito(id_remito)
-        flash(f"Remito '{id_remito}' recibido en sede destino. Ejemplar listo.", "success")
+        n = gestor.obtener_remito(id_remito).cantidad_ejemplares
+        flash(f"Remito '{id_remito}' recibido en sede destino. {n} ejemplar(es) listo(s) para entregar a los socios.", "success")
     except TransicionInvalidaError as e:
         flash(f"Error de transición State: {e}", "danger")
     except BibliotecaExcepcion as e:
@@ -299,66 +308,57 @@ def recibir(id_remito):
 
 
 # -------------------------------------------------------------------------
-# 7. Reportes Obligatorios No Triviales
+# 7. Reportes de Gestión (no triviales: indicadores, tasas y alertas calculadas)
 # -------------------------------------------------------------------------
 @app.route("/reportes")
 def reportes():
-    rep1 = gestor.reporte_prestamos_activos_y_transito()
-    rep2 = gestor.reporte_prestamos_vencidos(date.today())
-    rep3 = gestor.reporte_disponibilidad_por_sede()
-    rep4 = gestor.reporte_libros_mas_solicitados_intersedes()
+    return render_template("reportes.html", hoy=date.today(), **generador_reportes.todos(date.today()))
 
-    return render_template(
-        "reportes.html",
-        rep1=rep1,
-        rep2=rep2,
-        rep3=rep3,
-        rep4=rep4,
-        hoy=date.today()
-    )
+
+def _enviar_pdf(buffer, nombre_archivo):
+    return send_file(buffer, mimetype="application/pdf", as_attachment=True, download_name=nombre_archivo)
 
 
 @app.route("/reportes/pdf/activos")
 def reporte_pdf_activos():
-    rep1 = gestor.reporte_prestamos_activos_y_transito()
-    buffer = reportes_pdf.pdf_prestamos_activos_transito(rep1)
-    return send_file(buffer, mimetype="application/pdf", as_attachment=True,
-                      download_name="reporte_prestamos_activos_transito.pdf")
+    rep = generador_reportes.prestamos_activos_y_transito(date.today())
+    return _enviar_pdf(reportes_pdf.pdf_prestamos_activos_transito(rep), "reporte_prestamos_activos_transito.pdf")
 
 
 @app.route("/reportes/pdf/vencidos")
 def reporte_pdf_vencidos():
-    rep2 = gestor.reporte_prestamos_vencidos(date.today())
-    buffer = reportes_pdf.pdf_prestamos_vencidos(rep2)
-    return send_file(buffer, mimetype="application/pdf", as_attachment=True,
-                      download_name="reporte_prestamos_vencidos.pdf")
-
-
-@app.route("/reportes/pdf/disponibilidad")
-def reporte_pdf_disponibilidad():
-    rep3 = gestor.reporte_disponibilidad_por_sede()
-    buffer = reportes_pdf.pdf_disponibilidad_por_sede(rep3)
-    return send_file(buffer, mimetype="application/pdf", as_attachment=True,
-                      download_name="reporte_disponibilidad_por_sede.pdf")
+    rep = generador_reportes.morosidad_y_sanciones(date.today())
+    return _enviar_pdf(reportes_pdf.pdf_morosidad_y_sanciones(rep), "reporte_morosidad_y_sanciones.pdf")
 
 
 @app.route("/reportes/pdf/intersedes")
 def reporte_pdf_intersedes():
-    rep4 = gestor.reporte_libros_mas_solicitados_intersedes()
-    buffer = reportes_pdf.pdf_libros_mas_solicitados(rep4)
-    return send_file(buffer, mimetype="application/pdf", as_attachment=True,
-                      download_name="reporte_libros_mas_solicitados.pdf")
+    rep = generador_reportes.demanda_intersedes()
+    return _enviar_pdf(reportes_pdf.pdf_demanda_intersedes(rep), "reporte_demanda_intersedes.pdf")
+
+
+@app.route("/reportes/pdf/disponibilidad")
+def reporte_pdf_disponibilidad():
+    rep = generador_reportes.disponibilidad_por_sede()
+    return _enviar_pdf(reportes_pdf.pdf_disponibilidad_por_sede(rep), "reporte_disponibilidad_por_sede.pdf")
+
+
+@app.route("/reportes/pdf/logistica")
+def reporte_pdf_logistica():
+    rep = generador_reportes.efectividad_logistica(date.today())
+    return _enviar_pdf(reportes_pdf.pdf_efectividad_logistica(rep), "reporte_efectividad_logistica.pdf")
+
+
+@app.route("/reportes/pdf/movimiento")
+def reporte_pdf_movimiento():
+    rep = generador_reportes.movimiento_entre_sedes()
+    return _enviar_pdf(reportes_pdf.pdf_movimiento_entre_sedes(rep), "reporte_movimiento_entre_sedes.pdf")
 
 
 @app.route("/reportes/pdf/completo")
 def reporte_pdf_completo():
-    rep1 = gestor.reporte_prestamos_activos_y_transito()
-    rep2 = gestor.reporte_prestamos_vencidos(date.today())
-    rep3 = gestor.reporte_disponibilidad_por_sede()
-    rep4 = gestor.reporte_libros_mas_solicitados_intersedes()
-    buffer = reportes_pdf.pdf_todos_los_reportes(rep1, rep2, rep3, rep4)
-    return send_file(buffer, mimetype="application/pdf", as_attachment=True,
-                      download_name="informe_completo_reportes.pdf")
+    reps = generador_reportes.todos(date.today())
+    return _enviar_pdf(reportes_pdf.pdf_todos_los_reportes(reps), "informe_completo_reportes.pdf")
 
 
 if __name__ == "__main__":
