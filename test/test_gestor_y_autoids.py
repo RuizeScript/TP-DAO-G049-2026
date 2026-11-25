@@ -23,12 +23,12 @@ def test_autogeneracion_ids_entidades(reiniciar_gestor):
     gestor = reiniciar_gestor
     
     # 1. Sede con ID autogenerado
-    sede = Sede(nombre="Sede Belgrano", direccion="Av. Cabildo 100", contacto="b@red.org", horarios="9-18")
+    sede = Sede(nombre="Sede Belgrano", direccion="Av. Cabildo 100", contacto="b@red.org", horarios="Lun a Vie 09:00 - 18:00")
     gestor.agregar_sede(sede)
     assert sede.id_sede == "SED-01"
 
     # Segunda sede
-    sede2 = Sede(nombre="Sede Palermo", direccion="Santa Fe 2000", contacto="p@red.org", horarios="9-18")
+    sede2 = Sede(nombre="Sede Palermo", direccion="Santa Fe 2000", contacto="p@red.org", horarios="Lun a Vie 09:00 - 18:00")
     gestor.agregar_sede(sede2)
     assert sede2.id_sede == "SED-02"
 
@@ -55,7 +55,7 @@ def test_autogeneracion_ids_entidades(reiniciar_gestor):
 
 def test_autogeneracion_id_reserva_y_prestamo(reiniciar_gestor):
     gestor = reiniciar_gestor
-    sede = gestor.agregar_sede(Sede(nombre="Central", direccion="Corrientes 100", contacto="c@red.org", horarios="8-20"))
+    sede = gestor.agregar_sede(Sede(nombre="Central", direccion="Corrientes 100", contacto="c@red.org", horarios="Lun a Vie 08:00 - 20:00"))
     socio = gestor.agregar_socio(Socio(nombre="Juan", apellido="Perez", dni="30111222", email="jp@test.com"))
     libro = gestor.agregar_libro(Libro(isbn="978-1234567890", titulo="Dune", autor="Frank Herbert", categoria="Sci-Fi", editorial="Ace"))
     ejemplar = gestor.agregar_ejemplar(Ejemplar(libro=libro, sede=sede))
@@ -82,7 +82,7 @@ def test_autogeneracion_id_reserva_y_prestamo(reiniciar_gestor):
 
 def test_validacion_socio_inhabilitado_rechaza_prestamo_y_reserva(reiniciar_gestor):
     gestor = reiniciar_gestor
-    sede = gestor.agregar_sede(Sede(nombre="Sede 1", direccion="Dir 1", contacto="c", horarios="h"))
+    sede = gestor.agregar_sede(Sede(nombre="Sede 1", direccion="Dir 1", contacto="c", horarios="Lun a Vie 09:00 - 18:00"))
     socio = gestor.agregar_socio(Socio(nombre="Carlos", apellido="Tevez", dni="28999888", email="c@test.com"))
     socio.penalizado_hasta = date.today() + timedelta(days=10)
     libro = gestor.agregar_libro(Libro(isbn="978-1111", titulo="Clean Code", autor="Uncle Bob", categoria="Dev", editorial="PH"))
@@ -103,7 +103,7 @@ def test_validacion_socio_inhabilitado_rechaza_prestamo_y_reserva(reiniciar_gest
 
 def test_validacion_sede_dada_de_baja(reiniciar_gestor):
     gestor = reiniciar_gestor
-    sede_inactiva = gestor.agregar_sede(Sede(nombre="Sede Clausurada", direccion="D", contacto="c", horarios="h", activa=False))
+    sede_inactiva = gestor.agregar_sede(Sede(nombre="Sede Clausurada", direccion="D", contacto="c", horarios="Lun a Vie 09:00 - 18:00", activa=False, comentarios="Clausurada por obras"))
     socio = gestor.agregar_socio(Socio(nombre="Ana", apellido="López", dni="40111222", email="a@test.com"))
     libro = gestor.agregar_libro(Libro(isbn="978-2222", titulo="Libro A", autor="Autor A", categoria="C", editorial="E"))
     ejemplar = gestor.agregar_ejemplar(Ejemplar(libro=libro, sede=sede_inactiva))

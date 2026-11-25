@@ -2,6 +2,7 @@ from datetime import date, datetime, time
 from models.enum import EstadoEjemplar, Estado
 from models.entidades import Sede, Socio, Libro, Ejemplar
 from models.operaciones import Prestamo, Reserva
+from models.horarios import normalizar_horarios
 from models.remito import Remito, Creado, Recibido
 from models.excepciones import (
     BibliotecaExcepcion,
@@ -181,6 +182,15 @@ class GestorBiblioteca:
 
     # --- 1. Administrar Sedes ---
     def agregar_sede(self, sede: Sede) -> Sede:
+        # El horario debe cumplir el formato (y se guarda siempre escrito igual)
+        sede.horarios = normalizar_horarios(sede.horarios)
+        # 'comentarios' es el motivo de la baja: una sede inactiva debe tenerlo; una activa no
+        sede.comentarios = (sede.comentarios or "").strip()
+        if sede.activa:
+            sede.comentarios = ""
+        elif not sede.comentarios:
+            raise BibliotecaExcepcion("Una sede dada de baja necesita un motivo (comentarios).")
+
         if not sede.id_sede:
             sede.id_sede = self.generar_id_sede()
         if sede.id_sede in self.sedes:
@@ -195,10 +205,14 @@ class GestorBiblioteca:
             raise BibliotecaExcepcion(f"Sede '{id_sede}' no encontrada.")
         return sede
 
-    def cambiar_estado_sede(self, id_sede: str, activa: bool):
+    def cambiar_estado_sede(self, id_sede: str, activa: bool, comentarios: str = ""):
+        """Da de baja (exige el motivo, que queda en 'comentarios') o reactiva (borra el motivo) una sede."""
         sede = self.obtener_sede(id_sede)
-        sede.activa = activa
-        self.sede_dao.actualizar_estado(id_sede, activa)
+        if activa:
+            sede.reactivar()
+        else:
+            sede.dar_de_baja(comentarios)
+        self.sede_dao.actualizar_estado(id_sede, sede.activa, sede.comentarios)
 
     # --- 2. Administrar Socios ---
     def agregar_socio(self, socio: Socio) -> Socio:

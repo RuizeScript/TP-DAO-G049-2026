@@ -67,9 +67,13 @@ def inicializar_bd(db_path: str = DB_PATH_DEFAULT):
                 direccion TEXT,
                 contacto TEXT,
                 horarios TEXT,
-                activa INTEGER NOT NULL DEFAULT 1
+                activa INTEGER NOT NULL DEFAULT 1,
+                comentarios TEXT NOT NULL DEFAULT ''
             );
         """)
+        # Bases creadas antes de existir 'comentarios' (motivo de la baja): se agrega la columna sin perder datos
+        if "comentarios" not in [fila[1] for fila in cursor.execute("PRAGMA table_info(sedes)")]:
+            cursor.execute("ALTER TABLE sedes ADD COLUMN comentarios TEXT NOT NULL DEFAULT ''")
 
         # Tabla Socios
         cursor.execute("""

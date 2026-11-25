@@ -27,7 +27,7 @@ def cargar_datos_iniciales(gestor: GestorBiblioteca):
         nombre="Sede Central",
         direccion="Av. Corrientes 1234, CABA",
         contacto="central@bibliored.org / 011-4381-1111",
-        horarios="Lun a Vie 8:00 - 20:00, Sáb 9:00 - 13:00",
+        horarios="Lun a Vie 08:00 - 20:00, Sáb 09:00 - 13:00",
         activa=True
     )
     sede_norte = Sede(
@@ -35,7 +35,7 @@ def cargar_datos_iniciales(gestor: GestorBiblioteca):
         nombre="Sede Norte",
         direccion="Av. Cabildo 2450, Belgrano",
         contacto="norte@bibliored.org / 011-4782-2222",
-        horarios="Lun a Sáb 9:00 - 18:00",
+        horarios="Lun a Sáb 09:00 - 18:00",
         activa=True
     )
     sede_patricios = Sede(
@@ -43,16 +43,17 @@ def cargar_datos_iniciales(gestor: GestorBiblioteca):
         nombre="Sede Parque Patricios (Polo Tec)",
         direccion="Av. Caseros 3010, Parque Patricios",
         contacto="patricios@bibliored.org / 011-4943-3333",
-        horarios="Lun a Vie 9:00 - 19:00",
+        horarios="Lun a Vie 09:00 - 19:00",
         activa=True
     )
     sede_sur = Sede(
         id_sede="SED-04",
-        nombre="Sede Sur (En refacción)",
+        nombre="Sede Sur",
         direccion="Av. Montes de Oca 780, Barracas",
         contacto="sur@bibliored.org / 011-4301-4444",
-        horarios="Cerrada temporalmente por obras",
-        activa=False  # Sede inhabilitada / dada de baja para validar regla de negocio
+        horarios="Lun a Vie 09:00 - 18:00",  # su horario habitual: la baja no lo modifica
+        activa=False,  # Sede inhabilitada / dada de baja para validar regla de negocio
+        comentarios="Cerrada temporalmente por obras de refacción"  # motivo de la baja
     )
 
     gestor.agregar_sede(sede_central)

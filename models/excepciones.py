@@ -18,3 +18,7 @@ class TransicionInvalidaError(BibliotecaExcepcion):
     pass
 
 
+class HorarioInvalidoError(BibliotecaExcepcion):
+    pass
+
+

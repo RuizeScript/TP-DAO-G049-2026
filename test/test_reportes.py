@@ -32,10 +32,10 @@ def escenario():
     """
     g = GestorBiblioteca()
     g.reiniciar_para_tests("test_biblioteca.db")
-    a = g.agregar_sede(Sede(nombre="A", activa=True))
-    b = g.agregar_sede(Sede(nombre="B", activa=True))
-    g.agregar_sede(Sede(nombre="C", activa=True))
-    g.agregar_sede(Sede(nombre="D", activa=False))
+    a = g.agregar_sede(Sede(nombre="A", horarios="Lun a Vie 09:00 - 18:00", activa=True))
+    b = g.agregar_sede(Sede(nombre="B", horarios="Lun a Vie 09:00 - 18:00", activa=True))
+    g.agregar_sede(Sede(nombre="C", horarios="Lun a Vie 09:00 - 18:00", activa=True))
+    g.agregar_sede(Sede(nombre="D", horarios="Lun a Vie 09:00 - 18:00", activa=False, comentarios="En refacción"))
     s = [g.agregar_socio(Socio(nombre=f"S{i}", apellido="Test", dni=f"2000000{i}", email=f"s{i}@t.com")) for i in range(4)]
     l1 = g.agregar_libro(Libro(isbn="978-1", titulo="Dune", autor="Herbert"))
     l2 = g.agregar_libro(Libro(isbn="978-2", titulo="Neuromante", autor="Gibson"))
@@ -109,7 +109,7 @@ def test_reporte_2_morosidad_sanciones_e_incumplimiento(escenario):
 def test_reporte_2_limites_de_gravedad(mora, gravedad):
     g = GestorBiblioteca()
     g.reiniciar_para_tests("test_biblioteca.db")
-    sede = g.agregar_sede(Sede(nombre="A", activa=True))
+    sede = g.agregar_sede(Sede(nombre="A", horarios="Lun a Vie 09:00 - 18:00", activa=True))
     socio = g.agregar_socio(Socio(nombre="S", apellido="T", dni="1", email="s@t.com"))
     libro = g.agregar_libro(Libro(isbn="978-9", titulo="X", autor="Y"))
     ej = g.agregar_ejemplar(Ejemplar(libro=libro, sede=sede))
@@ -177,8 +177,8 @@ def test_reporte_5_efectividad_logistica(escenario):
 def test_reporte_5_entrega_tardia_supera_el_sla():
     g = GestorBiblioteca()
     g.reiniciar_para_tests("test_biblioteca.db")
-    a = g.agregar_sede(Sede(nombre="A", activa=True))
-    b = g.agregar_sede(Sede(nombre="B", activa=True))
+    a = g.agregar_sede(Sede(nombre="A", horarios="Lun a Vie 09:00 - 18:00", activa=True))
+    b = g.agregar_sede(Sede(nombre="B", horarios="Lun a Vie 09:00 - 18:00", activa=True))
     socio = g.agregar_socio(Socio(nombre="S", apellido="T", dni="1", email="s@t.com"))
     libro = g.agregar_libro(Libro(isbn="978-9", titulo="X", autor="Y"))
     ej = g.agregar_ejemplar(Ejemplar(libro=libro, sede=a))

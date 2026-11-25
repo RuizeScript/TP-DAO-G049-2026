@@ -52,6 +52,7 @@ def sedes():
         direccion = request.form.get("direccion", "").strip()
         contacto = request.form.get("contacto", "").strip()
         horarios = request.form.get("horarios", "").strip()
+        comentarios = request.form.get("comentarios", "").strip()
         activa = True if request.form.get("activa") else False
 
         try:
@@ -61,7 +62,8 @@ def sedes():
                 direccion=direccion,
                 contacto=contacto,
                 horarios=horarios,
-                activa=activa
+                activa=activa,
+                comentarios=comentarios
             )
             sede_creada = gestor.agregar_sede(nueva_sede)
             flash(f"Sede '{nombre}' ({sede_creada.id_sede}) registrada exitosamente.", "success")
@@ -77,9 +79,12 @@ def toggle_sede(id_sede):
     try:
         sede = gestor.obtener_sede(id_sede)
         nuevo_estado = not sede.activa
-        gestor.cambiar_estado_sede(id_sede, nuevo_estado)
-        estado_txt = "activada" if nuevo_estado else "dada de baja"
-        flash(f"Sede '{sede.nombre}' ha sido {estado_txt}.", "info")
+        # Al inhabilitar el formulario envía el motivo (obligatorio); al activar no hace falta
+        gestor.cambiar_estado_sede(id_sede, nuevo_estado, request.form.get("comentarios", ""))
+        if nuevo_estado:
+            flash(f"Sede '{sede.nombre}' ha sido activada.", "info")
+        else:
+            flash(f"Sede '{sede.nombre}' ha sido dada de baja. Motivo: {sede.comentarios}", "info")
     except BibliotecaExcepcion as e:
         flash(str(e), "danger")
     return redirect(url_for("sedes"))

@@ -1,15 +1,17 @@
-from models.excepciones import SedeDadaDeBajaError
+from models.excepciones import SedeDadaDeBajaError, BibliotecaExcepcion
 from datetime import date
 from models.enum import EstadoEjemplar, Estado
 
 class Sede:
-    def __init__(self, id_sede: str = None, nombre: str = "", direccion: str = "", contacto: str = "", horarios: str = "", activa: bool = True):
+    def __init__(self, id_sede: str = None, nombre: str = "", direccion: str = "", contacto: str = "", horarios: str = "", activa: bool = True, comentarios: str = ""):
         self._id_sede = id_sede
         self.nombre = nombre
         self.direccion = direccion
         self.contacto = contacto
         self.horarios = horarios
         self.activa = activa
+        # Motivo de la baja: solo tiene sentido mientras la sede está inactiva (al reactivarla se borra)
+        self.comentarios = comentarios
     
     @property
     def id_sede(self):
@@ -22,9 +24,22 @@ class Sede:
     def verificar_sede(self):
         if not self.activa:
             raise SedeDadaDeBajaError(f"La sede {self.nombre} ha sido dada de baja y no está disponible para operaciones.")
-        
+
+    def dar_de_baja(self, motivo: str):
+        """Inhabilita la sede. El motivo es obligatorio y queda en 'comentarios'; el horario no se toca."""
+        motivo = (motivo or "").strip()
+        if not motivo:
+            raise BibliotecaExcepcion("Indicá el motivo de la baja de la sede.")
+        self.activa = False
+        self.comentarios = motivo
+
+    def reactivar(self):
+        """Vuelve a habilitar la sede; el motivo de la baja ya no aplica, así que se borra."""
+        self.activa = True
+        self.comentarios = ""
+
     def __str__(self):
-        estado = "Activa" if self.activa else "Inactiva"
+        estado = "Activa" if self.activa else (f"Inactiva ({self.comentarios})" if self.comentarios else "Inactiva")
         return f"Sede: {self.nombre}, Dirección: {self.direccion}, Contacto: {self.contacto}, Horarios: {self.horarios}, Estado: {estado}"
     
     

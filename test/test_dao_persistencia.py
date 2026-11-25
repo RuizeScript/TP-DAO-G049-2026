@@ -34,7 +34,7 @@ def temp_db():
 
 def test_sede_dao_crud(temp_db):
     dao = SedeDAO(temp_db)
-    sede = Sede(id_sede="SED-01", nombre="Central", direccion="Corrientes 100", contacto="c@red.org", horarios="8-20", activa=True)
+    sede = Sede(id_sede="SED-01", nombre="Central", direccion="Corrientes 100", contacto="c@red.org", horarios="Lun a Vie 08:00 - 20:00", activa=True)
     dao.crear(sede)
 
     obtenida = dao.obtener_por_id("SED-01")
@@ -42,9 +42,14 @@ def test_sede_dao_crud(temp_db):
     assert obtenida.nombre == "Central"
     assert obtenida.activa is True
 
-    dao.actualizar_estado("SED-01", False)
+    dao.actualizar_estado("SED-01", False, "Obras de refacción")
     actualizada = dao.obtener_por_id("SED-01")
     assert actualizada.activa is False
+    assert actualizada.comentarios == "Obras de refacción"
+
+    dao.actualizar_estado("SED-01", True)   # al reactivarla el motivo de la baja se borra
+    reactivada = dao.obtener_por_id("SED-01")
+    assert reactivada.activa is True and reactivada.comentarios == ""
 
     sedes = dao.listar()
     assert len(sedes) == 1
@@ -222,7 +227,7 @@ def test_persistencia_recarga_en_gestor():
     gestor = GestorBiblioteca()
     gestor.reiniciar_para_tests("test_biblioteca.db")
 
-    s = gestor.agregar_sede(Sede(nombre="Sede Prueba Persistencia", activa=True))
+    s = gestor.agregar_sede(Sede(nombre="Sede Prueba Persistencia", horarios="Lun a Vie 09:00 - 18:00", activa=True))
     soc = gestor.agregar_socio(Socio(nombre="Mario", apellido="Bros", dni="99887766", email="m@bros.com"))
     lib = gestor.agregar_libro(Libro(titulo="El Aleph", autor="Jorge Luis Borges"))
     ej = gestor.agregar_ejemplar(Ejemplar(libro=lib, sede=s))

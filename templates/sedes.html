@@ -4,7 +4,7 @@
 
 {% block content %}
 <div class="row g-4">
-    <div class="col-lg-4">
+    <div class="col-lg-3">
         <div class="card shadow-sm">
             <div class="card-header bg-white py-3 border-0">
                 <h5 class="fw-bold mb-0 text-dark"><i class="bi bi-building-add text-primary me-2"></i>Registrar Sede</h5>
@@ -29,11 +29,17 @@
                     </div>
                     <div class="mb-3">
                         <label class="form-label small fw-semibold">Horarios de Atención</label>
-                        <input type="text" name="horarios" class="form-control" placeholder="Ej: Lun a Vie 9:00 a 19:00" required>
+                        <input type="text" name="horarios" class="form-control" placeholder="Ej: Lun a Vie 09:00 - 18:00" required>
+                        <div class="form-text small">DDD a DDD HH:MM - HH:MM</div>
                     </div>
                     <div class="form-check form-switch mb-3">
                         <input class="form-check-input" type="checkbox" name="activa" id="activaSwitch" checked>
                         <label class="form-check-label small" for="activaSwitch">Sede Activa para Operaciones</label>
+                    </div>
+                    <!-- Solo aparece (y es obligatorio) si la sede se crea inactiva: es el motivo de la baja -->
+                    <div class="mb-3" id="grupoComentarios" style="display: none;">
+                        <label class="form-label small fw-semibold">Comentarios (motivo de la baja)</label>
+                        <textarea name="comentarios" id="comentariosSede" class="form-control" rows="2" style="border-radius: 18px;" placeholder="Ej: Cerrada temporalmente por obras"></textarea>
                     </div>
                     <button type="submit" class="btn btn-primary w-100">
                         <i class="bi bi-save me-1"></i> Guardar Sede
@@ -43,7 +49,7 @@
         </div>
     </div>
 
-    <div class="col-lg-8">
+    <div class="col-lg-9">
         <div class="card shadow-sm">
             <div class="card-header bg-white py-3 d-flex justify-content-between align-items-center border-0">
                 <h5 class="fw-bold mb-0 text-dark"><i class="bi bi-building text-primary me-2"></i>Red de Sedes Bibliotecarias</h5>
@@ -58,6 +64,7 @@
                                 <th>Nombre</th>
                                 <th>Dirección & Contacto</th>
                                 <th>Horarios</th>
+                                <th>Comentarios</th>
                                 <th>Estado</th>
                                 <th>Acción</th>
                             </tr>
@@ -71,7 +78,20 @@
                                     <div class="small">{{ s.direccion }}</div>
                                     <div class="small text-muted">{{ s.contacto }}</div>
                                 </td>
-                                <td class="small">{{ s.horarios }}</td>
+                                <td class="small">
+                                    {# una franja por línea; el rango horario no se parte: "Lun a Vie" / "08:00 - 20:00" #}
+                                    {% for franja in s.horarios.split(', ') %}
+                                        {% set partes = franja.rsplit(' ', 3) %}
+                                        <div>{% if partes|length == 4 and partes[2] == '-' %}{{ partes[0] }} <span class="text-nowrap">{{ partes[1] }} - {{ partes[3] }}</span>{% else %}{{ franja }}{% endif %}</div>
+                                    {% endfor %}
+                                </td>
+                                <td class="small">
+                                    {% if not s.activa and s.comentarios %}
+                                        {{ s.comentarios }}
+                                    {% else %}
+                                        <span class="text-muted">&mdash;</span>
+                                    {% endif %}
+                                </td>
                                 <td>
                                     {% if s.activa %}
                                         <span class="badge bg-success-subtle text-success border border-success-subtle">
@@ -84,22 +104,44 @@
                                     {% endif %}
                                 </td>
                                 <td>
-                                    <form action="{{ url_for('toggle_sede', id_sede=s.id_sede) }}" method="POST" class="d-inline">
-                                        {% if s.activa %}
-                                            <button type="submit" class="btn btn-sm btn-outline-danger" title="Dar de baja">
-                                                <i class="bi bi-slash-circle"></i> Inhabilitar
-                                            </button>
-                                        {% else %}
-                                            <button type="submit" class="btn btn-sm btn-outline-success" title="Reactivar">
+                                    {% if s.activa %}
+                                        <!-- Inhabilitar pide el motivo de la baja (queda en Comentarios) -->
+                                        <button type="button" class="btn btn-sm btn-outline-danger" title="Dar de baja" data-bs-toggle="modal" data-bs-target="#modalBaja{{ s.id_sede }}">
+                                            <i class="bi bi-slash-circle"></i> Inhabilitar
+                                        </button>
+
+                                        <div class="modal fade" id="modalBaja{{ s.id_sede }}" tabindex="-1">
+                                            <div class="modal-dialog modal-dialog-centered">
+                                                <div class="modal-content">
+                                                    <form action="{{ url_for('toggle_sede', id_sede=s.id_sede) }}" method="POST">
+                                                        <div class="modal-header">
+                                                            <h6 class="modal-title fw-bold">Dar de baja: {{ s.nombre }}</h6>
+                                                            <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+                                                        </div>
+                                                        <div class="modal-body">
+                                                            <label class="form-label small fw-semibold">Motivo de la baja</label>
+                                                            <textarea name="comentarios" class="form-control" rows="3" style="border-radius: 18px;" placeholder="Ej: Cerrada temporalmente por obras" required></textarea>
+                                                        </div>
+                                                        <div class="modal-footer">
+                                                            <button type="button" class="btn btn-secondary btn-sm" data-bs-dismiss="modal">Cancelar</button>
+                                                            <button type="submit" class="btn btn-danger btn-sm">Confirmar baja</button>
+                                                        </div>
+                                                    </form>
+                                                </div>
+                                            </div>
+                                        </div>
+                                    {% else %}
+                                        <form action="{{ url_for('toggle_sede', id_sede=s.id_sede) }}" method="POST" class="d-inline">
+                                            <button type="submit" class="btn btn-sm btn-outline-success" title="Reactivar (se borra el motivo de la baja)">
                                                 <i class="bi bi-check2-circle"></i> Activar
                                             </button>
-                                        {% endif %}
-                                    </form>
+                                        </form>
+                                    {% endif %}
                                 </td>
                             </tr>
                             {% else %}
                             <tr>
-                                <td colspan="6" class="text-center py-4 text-muted">No hay sedes registradas.</td>
+                                <td colspan="7" class="text-center py-4 text-muted">No hay sedes registradas.</td>
                             </tr>
                             {% endfor %}
                         </tbody>
@@ -109,4 +151,21 @@
         </div>
     </div>
 </div>
+
+<script>
+    // En el alta, el campo de comentarios (motivo de la baja) solo se muestra y exige si la sede se crea inactiva
+    (function () {
+        var interruptor = document.getElementById("activaSwitch");
+        var grupo = document.getElementById("grupoComentarios");
+        var campo = document.getElementById("comentariosSede");
+        function actualizar() {
+            var inactiva = !interruptor.checked;
+            grupo.style.display = inactiva ? "block" : "none";
+            campo.required = inactiva;
+            if (!inactiva) { campo.value = ""; }
+        }
+        interruptor.addEventListener("change", actualizar);
+        actualizar();
+    })();
+</script>
 {% endblock %}

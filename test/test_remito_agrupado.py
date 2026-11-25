@@ -12,9 +12,9 @@ def red():
     """Red mínima: 3 sedes, 4 socios y 4 ejemplares en la sede A (un título, tres copias + otro título)."""
     gestor = GestorBiblioteca()
     gestor.reiniciar_para_tests("test_biblioteca.db")
-    sede_a = gestor.agregar_sede(Sede(nombre="A", activa=True))
-    sede_b = gestor.agregar_sede(Sede(nombre="B", activa=True))
-    sede_c = gestor.agregar_sede(Sede(nombre="C", activa=True))
+    sede_a = gestor.agregar_sede(Sede(nombre="A", horarios="Lun a Vie 09:00 - 18:00", activa=True))
+    sede_b = gestor.agregar_sede(Sede(nombre="B", horarios="Lun a Vie 09:00 - 18:00", activa=True))
+    sede_c = gestor.agregar_sede(Sede(nombre="C", horarios="Lun a Vie 09:00 - 18:00", activa=True))
     socios = [
         gestor.agregar_socio(Socio(nombre=f"Socio{i}", apellido="Test", dni=f"1000000{i}", email=f"s{i}@t.com"))
         for i in range(4)
