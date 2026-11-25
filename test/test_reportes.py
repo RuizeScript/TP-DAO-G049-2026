@@ -97,7 +97,9 @@ def test_reporte_2_morosidad_sanciones_e_incumplimiento(escenario):
     d = r["detalle"][0]
     assert (d["prestamo"].id_prestamo, d["dias_retraso"], d["gravedad"]) == ("P1", 6, "Leve")
     assert d["sancion_dias"] == 12 and d["sancion_hasta"] == HOY + timedelta(days=12)   # 2 días por día de mora
-    assert (r["mora_promedio"], r["mora_maxima"], r["sancion_proyectada_total"]) == (6.0, 6, 12)
+    assert (r["mora_promedio"], r["mora_maxima"]) == (6.0, 6)
+    assert d["extiende_sancion"] and d["sancion_vigente_hasta"] is None            # el socio no tenía ninguna sanción
+    assert (r["socios_a_sancionar"], r["sancion_proyectada_max_dias"], r["socios_sin_efecto"]) == (1, 12, 0)
     assert r["por_gravedad"] == {"Leve": 1, "Moderada": 0, "Grave": 0}
     assert r["por_socio"][0]["mora_acumulada"] == 6
     # resueltos: P5 (tarde) + P6 (en término) + P1 (vencido) -> incumplen 2 de 3
@@ -171,7 +173,8 @@ def test_reporte_5_efectividad_logistica(escenario):
     assert (r["envios_evitados"], r["pct_envios_evitados"]) == (1, 25.0)
     t = {x["etapa"].split(" ")[0]: formatear_duracion(x["promedio_s"]) for x in r["tiempos_por_etapa"]}
     assert t == {"Espera": "4 h 30 min", "Preparación": "19 h 30 min", "Tránsito": "2 d", "Ciclo": "3 d"}
-    assert r["remitos_por_estado"] == {"Creado": 1, "Empaquetado": 0, "Despachado": 1, "Recibido": 1}
+    assert r["remitos_por_estado"] == {"Creado": 1, "Empaquetado": 0, "Despachado": 1, "Recibido": 1, "Cancelado": 0}
+    assert (r["cancelados"], r["cancelados_sin_salir"], r["cancelados_en_transito"], r["remitos_evaluados"]) == (0, 0, 0, 3)
 
 
 def test_reporte_5_entrega_tardia_supera_el_sla():
@@ -252,6 +255,7 @@ def test_datos_demo_cargan_y_muestran_remitos_con_varios_ejemplares():
     assert {k: (str(r.estado_actual), r.cantidad_ejemplares) for k, r in por_id.items()} == {
         "REM-001": ("Recibido", 2), "REM-002": ("Recibido", 1), "REM-003": ("Empaquetado", 1),
         "REM-004": ("Creado", 2), "REM-005": ("Despachado", 2), "REM-006": ("Empaquetado", 1),
+        "REM-007": ("Cancelado", 1), "REM-008": ("Cancelado", 1),
     }
     # todo lo cargado en memoria coincide con lo persistido
     snapshot = [(r.id_remito, str(r.estado_actual), [e.id_ejemplar for e in r.ejemplares]) for r in g.remitos]
@@ -264,4 +268,12 @@ def test_datos_demo_cargan_y_muestran_remitos_con_varios_ejemplares():
     assert todos["morosidad"]["por_gravedad"] == {"Leve": 1, "Moderada": 1, "Grave": 1}
     assert todos["logistica"]["entregados_a_tiempo"] == 1 and todos["logistica"]["entregas_tardias"] == 1
     assert todos["logistica"]["estancados"] == 1 and todos["logistica"]["envios_evitados"] == 3
+    # los dos remitos cancelados de la demo: uno nunca salió (no cuenta en las tasas) y otro se canceló en tránsito (incidencia)
+    log = todos["logistica"]
+    assert (log["cancelados"], log["cancelados_sin_salir"], log["cancelados_en_transito"]) == (2, 1, 1)
+    assert log["total_incidencias"] == 3 and log["total_remitos"] == 8 and log["remitos_evaluados"] == 7
+    assert todos["movimiento"]["total_remitos"] == 6               # los cancelados no son movimiento
+    for id_prestamo in ("PREST-116", "PREST-117"):
+        p = next(p for p in g.prestamos if p.id_prestamo == id_prestamo)
+        assert p.cancelado and p.ejemplar.esta_disponible()
     assert reportes_pdf.pdf_todos_los_reportes(todos).getvalue().startswith(b"%PDF")

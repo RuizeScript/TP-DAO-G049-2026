@@ -5,6 +5,7 @@ from models.datos_demo import cargar_datos_iniciales
 from models.entidades import Sede, Socio, Libro, Ejemplar
 from models.enum import Estado
 from models.excepciones import BibliotecaExcepcion, TransicionInvalidaError
+from models.remito import Recibido, Cancelado
 from models.reportes import Reportes, formatear_duracion
 import reportes_pdf
 
@@ -24,10 +25,14 @@ generador_reportes = Reportes(gestor)
 @app.route("/")
 def index():
     ultimos_prestamos = sorted(gestor.prestamos, key=lambda p: p.fecha_inicio, reverse=True)[:5]
-    remitos_en_proceso = [r for r in gestor.remitos if r.estado_actual.__class__.__name__ != "Recibido"]
-    
-    total_prestamos_activos = len([p for p in gestor.prestamos if p.fecha_devolucion is None])
-    
+    # "En proceso" = todavía vigentes: ni recibidos ni cancelados (los dos son estados finales)
+    remitos_en_proceso = [r for r in gestor.remitos if r.estado_actual.__class__.__name__ not in ("Recibido", "Cancelado")]
+    remitos_entregados = sum(1 for r in gestor.remitos if r.estado_actual.__class__.__name__ == "Recibido")
+    remitos_cancelados = sum(1 for r in gestor.remitos if r.esta_cancelado)
+
+    # Un préstamo cancelado (por un remito cancelado) no está activo
+    total_prestamos_activos = len([p for p in gestor.prestamos if p.esta_abierto])
+
     return render_template(
         "index.html",
         total_sedes=len(gestor.sedes),
@@ -37,7 +42,9 @@ def index():
         total_prestamos_activos=total_prestamos_activos,
         total_remitos=len(gestor.remitos),
         ultimos_prestamos=ultimos_prestamos,
-        remitos_en_proceso=remitos_en_proceso
+        remitos_en_proceso=remitos_en_proceso,
+        remitos_entregados=remitos_entregados,
+        remitos_cancelados=remitos_cancelados
     )
 
 
@@ -71,7 +78,37 @@ def sedes():
             flash(str(e), "danger")
         return redirect(url_for("sedes"))
 
-    return render_template("sedes.html", sedes=list(gestor.sedes.values()))
+    lista = list(gestor.sedes.values())
+    # Para cada sede, qué registros la usan: si hay alguno no se puede eliminar (el modal lo explica)
+    en_uso = {s.id_sede: gestor.referencias_de_sede(s.id_sede) for s in lista}
+    return render_template("sedes.html", sedes=lista, en_uso=en_uso)
+
+
+@app.route("/sedes/<id_sede>/editar", methods=["POST"])
+def editar_sede(id_sede):
+    try:
+        sede = gestor.editar_sede(
+            id_sede,
+            nombre=request.form.get("nombre", ""),
+            direccion=request.form.get("direccion", ""),
+            contacto=request.form.get("contacto", ""),
+            horarios=request.form.get("horarios", ""),
+            comentarios=request.form.get("comentarios"),
+        )
+        flash(f"Sede '{sede.nombre}' ({sede.id_sede}) actualizada.", "success")
+    except BibliotecaExcepcion as e:
+        flash(str(e), "danger")
+    return redirect(url_for("sedes"))
+
+
+@app.route("/sedes/<id_sede>/eliminar", methods=["POST"])
+def eliminar_sede(id_sede):
+    try:
+        sede = gestor.eliminar_sede(id_sede)
+        flash(f"Sede '{sede.nombre}' ({sede.id_sede}) eliminada definitivamente.", "info")
+    except BibliotecaExcepcion as e:
+        flash(str(e), "danger")
+    return redirect(url_for("sedes"))
 
 
 @app.route("/sedes/<id_sede>/toggle", methods=["POST"])
@@ -188,9 +225,11 @@ def prestamos():
         id_prestamo = request.form.get("id_prestamo", "").strip() or None
         id_socio = request.form.get("id_socio", "").strip()
         id_ejemplar = request.form.get("id_ejemplar", "").strip()
-        id_sede_origen = request.form.get("id_sede_origen", "").strip()
         id_sede_destino = request.form.get("id_sede_destino", "").strip()
         dias_prestamo = int(request.form.get("dias_prestamo", 14))
+        # La sede de origen no se elige: es la sede donde está el ejemplar
+        ejemplar = gestor.ejemplares.get(id_ejemplar)
+        id_sede_origen = ejemplar.sede.id_sede if ejemplar else ""
 
         try:
             p = gestor.crear_prestamo(
@@ -212,12 +251,28 @@ def prestamos():
             flash(f"Error al registrar préstamo: {e}", "danger")
         return redirect(url_for("prestamos"))
 
+    # El select solo ofrece lo que se puede prestar (disponible y en una sede activa)
+    ejemplares_prestables = gestor.ejemplares_prestables()
+
+    # Si se llega desde el Catálogo ("Registrar préstamo"), el ejemplar elegido viene en la URL y queda ya seleccionado
+    id_preseleccionado = request.args.get("ejemplar", "").strip()
+    if id_preseleccionado:
+        elegido = next((e for e in ejemplares_prestables if e.id_ejemplar == id_preseleccionado), None)
+        if elegido:
+            flash(f"Ejemplar {elegido.id_ejemplar} ({elegido.libro.titulo}, {elegido.sede.nombre}) cargado desde el Catálogo. "
+                  "Completá el socio y la sede de destino.", "info")
+        else:
+            id_preseleccionado = ""
+            flash(f"El ejemplar '{request.args.get('ejemplar').strip()}' no se puede prestar ahora: no existe, "
+                  "no está disponible o su sede está dada de baja.", "warning")
+
     return render_template(
         "prestamos.html",
-        prestamos=gestor.prestamos,
+        prestamos=gestor.prestamos_recientes(),
         reservas=gestor.reservas,
         socios=list(gestor.socios.values()),
-        ejemplares=list(gestor.ejemplares.values()),
+        ejemplares=ejemplares_prestables,
+        id_ejemplar_preseleccionado=id_preseleccionado,
         sedes=list(gestor.sedes.values()),
         libros=list(gestor.libros.values()),
         estados_fisicos=list(Estado),
@@ -270,7 +325,12 @@ def cancelar_reserva(id_reserva):
 # -------------------------------------------------------------------------
 @app.route("/remitos")
 def remitos():
-    return render_template("remitos.html", remitos=gestor.remitos)
+    # Qué préstamos se cancelarían con cada remito: la ventana de confirmación de "Cancelar" lo informa antes de decidir
+    prestamos_afectados = {
+        r.id_remito: gestor.prestamos_de_remito(r)
+        for r in gestor.remitos if not isinstance(r.estado_actual, (Recibido, Cancelado))
+    }
+    return render_template("remitos.html", remitos=gestor.remitos, prestamos_afectados=prestamos_afectados)
 
 
 @app.route("/remitos/<id_remito>/empaquetar", methods=["POST"])
@@ -305,6 +365,25 @@ def recibir(id_remito):
         gestor.recibir_remito(id_remito)
         n = gestor.obtener_remito(id_remito).cantidad_ejemplares
         flash(f"Remito '{id_remito}' recibido en sede destino. {n} ejemplar(es) listo(s) para entregar a los socios.", "success")
+    except TransicionInvalidaError as e:
+        flash(f"Error de transición State: {e}", "danger")
+    except BibliotecaExcepcion as e:
+        flash(str(e), "danger")
+    return redirect(url_for("remitos"))
+
+
+@app.route("/remitos/<id_remito>/cancelar", methods=["POST"])
+def cancelar_remito(id_remito):
+    # La pantalla pide confirmación antes de enviar este formulario: cancelar es definitivo (estado final)
+    try:
+        resumen = gestor.cancelar_remito(id_remito, request.form.get("motivo", ""))
+        remito = gestor.obtener_remito(id_remito)
+        flash(
+            f"Remito '{id_remito}' cancelado (motivo: {remito.motivo_cancelacion}). "
+            f"{len(resumen['ejemplares'])} ejemplar(es) volvieron a estar disponibles en {remito.sede_origen.nombre} "
+            f"y {len(resumen['prestamos'])} préstamo(s) quedaron cancelados.",
+            "warning"
+        )
     except TransicionInvalidaError as e:
         flash(f"Error de transición State: {e}", "danger")
     except BibliotecaExcepcion as e:

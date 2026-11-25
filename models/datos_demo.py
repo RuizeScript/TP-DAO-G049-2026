@@ -13,7 +13,7 @@ def cargar_datos_iniciales(gestor: GestorBiblioteca):
     - Ejemplares físicos distribuidos estratégicamente entre sedes.
     - Escenarios operativos representativos: préstamos locales, interbibliotecarios con remitos
       que agrupan varios ejemplares por ruta, en diversos estados (Creado, Empaquetado, Despachado/En Tránsito,
-      Recibido), historial de envíos con fechas (a tiempo, tardío y estancado), préstamos vencidos con
+      Recibido y dos Cancelado), historial de envíos con fechas (a tiempo, tardío y estancado), préstamos vencidos con
       distinta gravedad, préstamos devueltos en término y fuera de término, y reservas activas.
     """
     if gestor.sedes:
@@ -328,6 +328,23 @@ def cargar_datos_iniciales(gestor: GestorBiblioteca):
         fecha_inicio=hoy - timedelta(days=10)
     )
     gestor.registrar_devolucion("PREST-106", hoy - timedelta(days=3), Estado.OPTIMO)
+
+    # F. Remitos CANCELADOS (estado final). Al cancelar, sus ejemplares vuelven a estar disponibles en la sede de origen
+    #    y los préstamos que esperaban ese envío quedan cancelados (no vencen ni sancionan al socio).
+    # F1. Cancelado EN TRÁNSITO (REM-007, Parque Patricios -> Central): salió hace 7 días y se canceló en el camino.
+    #     Cuenta como incidencia en el reporte de efectividad logística.
+    gestor.crear_prestamo(id_prestamo="PREST-116", id_socio="SOC-02", id_ejemplar="EJ-20",
+                          id_sede_origen="SED-03", id_sede_destino="SED-01",
+                          dias_prestamo=14, fecha_inicio=hoy - timedelta(days=8))
+    gestor.empaquetar_remito("REM-007", hace(8, 10))
+    gestor.despachar_remito("REM-007", hace(7, 9))
+    gestor.cancelar_remito("REM-007", "Corte de energía en la sede de destino: se suspendió la recepción", hace(6, 14))
+    # F2. Cancelado ANTES de salir (REM-008, Parque Patricios -> Norte): nunca se empaquetó.
+    #     No es una falla logística: no entra en las tasas del reporte.
+    gestor.crear_prestamo(id_prestamo="PREST-117", id_socio="SOC-08", id_ejemplar="EJ-14",
+                          id_sede_origen="SED-03", id_sede_destino="SED-02",
+                          dias_prestamo=14, fecha_inicio=hoy - timedelta(days=3))
+    gestor.cancelar_remito("REM-008", "Pedido anulado: el socio ya no necesita el libro", hace(2, 11))
 
     # =========================================================================
     # 6. RESERVAS ACTIVAS

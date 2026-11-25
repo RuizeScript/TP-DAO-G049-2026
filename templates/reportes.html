@@ -134,7 +134,7 @@
     <div class="card-header bg-white d-flex justify-content-between align-items-center">
         <div>
             <h5 class="fw-bold mb-0 text-dark"><i class="bi bi-calendar-x text-danger me-2"></i>Reporte 2: Morosidad y sanciones acumuladas</h5>
-            <small class="text-muted">Sanción vigente: 2 días de inhabilitación por cada día de retraso en la devolución.</small>
+            <small class="text-muted">Sanción: 2 días de inhabilitación por cada día de retraso, contados desde la devolución. Si el socio ya está sancionado se mantiene la que termina más tarde: las sanciones no se acumulan ni se acortan.</small>
         </div>
         {{ btn_pdf('reporte_pdf_vencidos') }}
     </div>
@@ -142,7 +142,7 @@
         <div class="row g-3 mb-4">
             {{ kpi('Préstamos vencidos', morosidad.total_vencidos, morosidad.por_gravedad['Grave'] ~ ' grave(s) · ' ~ morosidad.por_gravedad['Moderada'] ~ ' moderada(s) · ' ~ morosidad.por_gravedad['Leve'] ~ ' leve(s)', 'danger') }}
             {{ kpi('Mora promedio', morosidad.mora_promedio ~ ' días', 'máxima: ' ~ morosidad.mora_maxima ~ ' días') }}
-            {{ kpi('Sanción proyectada', morosidad.sancion_proyectada_total ~ ' días', 'si todos devolvieran hoy') }}
+            {{ kpi('Sanciones si devolvieran hoy', morosidad.socios_a_sancionar ~ ' socio(s)', ((morosidad.sancion_proyectada_max_dias ~ ' días la más larga') if morosidad.socios_a_sancionar else 'ninguna por aplicar') ~ ((' · ' ~ morosidad.socios_sin_efecto ~ ' sin efecto (ya sancionados por más tiempo)') if morosidad.socios_sin_efecto else '')) }}
             {{ kpi('Incumplimiento histórico', morosidad.tasa_incumplimiento ~ '%', 'sobre ' ~ morosidad.total_resueltos ~ ' préstamos resueltos (' ~ morosidad.devueltos_tarde ~ ' devueltos tarde)', 'danger' if morosidad.tasa_incumplimiento >= 25 else 'dark') }}
             {{ kpi('Socios sancionados', morosidad.sancionados|length, morosidad.pct_socios_sancionados ~ '% del padrón') }}
         </div>
@@ -164,7 +164,14 @@
                                 <td><span class="badge bg-danger">{{ d.dias_retraso }} días</span></td>
                                 <td><span class="badge bg-{{ color_gravedad[d.gravedad] }}{% if d.gravedad == 'Leve' %} text-dark{% endif %}"
                                           {% if d.gravedad == 'Moderada' %}style="background-color: #fd7e14 !important;"{% endif %}>{{ d.gravedad }}</span></td>
-                                <td class="small">{{ d.sancion_dias }} días<br><span class="text-muted">hasta {{ d.sancion_hasta.strftime('%d/%m/%Y') }}</span></td>
+                                <td class="small">
+                                    {% if d.extiende_sancion %}
+                                        {{ d.sancion_dias }} días<br><span class="text-muted">hasta {{ d.sancion_hasta.strftime('%d/%m/%Y') }}</span>
+                                        {% if d.sancion_vigente_hasta %}<br><span class="text-muted">amplía la vigente (hasta {{ d.sancion_vigente_hasta.strftime('%d/%m/%Y') }})</span>{% endif %}
+                                    {% else %}
+                                        <span class="text-muted">Sin efecto<br>ya sancionado hasta {{ d.sancion_vigente_hasta.strftime('%d/%m/%Y') }}</span>
+                                    {% endif %}
+                                </td>
                             </tr>
                             {% else %}
                             <tr><td colspan="6" class="text-center py-3 text-muted">
@@ -329,16 +336,17 @@
     <div class="card-header bg-white d-flex justify-content-between align-items-center">
         <div>
             <h5 class="fw-bold mb-0 text-dark"><i class="bi bi-truck text-info me-2"></i>Reporte 5: Efectividad logística e incidencias</h5>
-            <small class="text-muted">Éxito = remito entregado dentro de 3 días de tránsito. Incidencia = entrega tardía o remito sin avanzar más de 3 días.</small>
+            <small class="text-muted">Éxito = remito entregado dentro de 3 días de tránsito. Incidencia = entrega tardía, remito sin avanzar más de 3 días o remito cancelado en tránsito. Un remito cancelado antes de salir no es una falla logística: no entra en las tasas.</small>
         </div>
         {{ btn_pdf('reporte_pdf_logistica') }}
     </div>
     <div class="card-body">
         <div class="row g-3 mb-4">
             {{ kpi('Tasa de éxito', logistica.tasa_exito ~ '%', logistica.entregados_a_tiempo ~ ' entregas a tiempo', 'success' if logistica.tasa_exito >= 80 else 'danger') }}
-            {{ kpi('Remitos entregados', logistica.recibidos ~ ' / ' ~ logistica.total_remitos, logistica.tasa_entrega ~ '% completado · ' ~ logistica.en_curso ~ ' en curso') }}
-            {{ kpi('Incidencias', logistica.total_incidencias, logistica.entregas_tardias ~ ' entregas tardías · ' ~ logistica.estancados ~ ' estancados', 'danger' if logistica.total_incidencias else 'dark') }}
-            {{ kpi('Ejemplares por remito', logistica.ejemplares_por_remito, logistica.ejemplares_enviados ~ ' ejemplares en ' ~ logistica.total_remitos ~ ' remitos') }}
+            {{ kpi('Remitos entregados', logistica.recibidos ~ ' / ' ~ logistica.remitos_evaluados, logistica.tasa_entrega ~ '% completado · ' ~ logistica.en_curso ~ ' en curso') }}
+            {{ kpi('Incidencias', logistica.total_incidencias, logistica.entregas_tardias ~ ' entregas tardías · ' ~ logistica.estancados ~ ' estancados · ' ~ logistica.cancelados_en_transito ~ ' cancelados en tránsito', 'danger' if logistica.total_incidencias else 'dark') }}
+            {{ kpi('Remitos cancelados', logistica.cancelados, logistica.cancelados_sin_salir ~ ' antes de salir · ' ~ logistica.cancelados_en_transito ~ ' en tránsito', 'secondary' if logistica.cancelados else 'dark') }}
+            {{ kpi('Ejemplares por remito', logistica.ejemplares_por_remito, logistica.ejemplares_enviados ~ ' ejemplares en ' ~ logistica.remitos_evaluados ~ ' remitos') }}
             {{ kpi('Envíos evitados', logistica.envios_evitados, logistica.pct_envios_evitados ~ '% menos viajes gracias al agrupamiento', 'success') }}
         </div>
 
@@ -371,7 +379,7 @@
                     <li class="list-group-item px-0 d-flex justify-content-between align-items-start">
                         <span><strong>{{ i.remito.id_remito }}</strong> · {{ i.remito.sede_origen.nombre }} &rarr; {{ i.remito.sede_destino.nombre }}<br>
                             <span class="text-muted">{{ i.detalle }}</span></span>
-                        <span class="badge bg-{{ 'danger' if i.tipo == 'Estancado' else 'warning text-dark' }}">{{ i.tipo }}</span>
+                        <span class="badge bg-{{ 'danger' if i.tipo in ('Estancado', 'Cancelado en tránsito') else 'warning text-dark' }}">{{ i.tipo }}</span>
                     </li>
                     {% else %}
                     <li class="list-group-item text-muted px-0"><i class="bi bi-check-circle text-success me-1"></i> Sin incidencias: todos los envíos van en tiempo y forma.</li>

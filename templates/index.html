@@ -377,8 +377,7 @@
             <!-- 4. Recibido -->
             <div class="stage-pill">
                 <i class="bi bi-check2-circle stage-icon"></i>
-                <span class="stage-count">{% if total_remitos > remitos_en_proceso|length %}{{ total_remitos -
-                    remitos_en_proceso|length }}{% else %}0{% endif %}</span>
+                <span class="stage-count">{{ remitos_entregados }}</span>
                 <span class="stage-label">Entregados</span>
             </div>
         </div>
@@ -391,6 +390,9 @@
                         class="badge {% if remitos_en_proceso %}badge-lime text-dark{% else %}bg-light text-dark border{% endif %}">
                         {{ remitos_en_proceso|length }} en proceso
                     </span>
+                    {% if remitos_cancelados %}
+                    <span class="badge bg-light text-danger border">{{ remitos_cancelados }} cancelado{{ '' if remitos_cancelados == 1 else 's' }}</span>
+                    {% endif %}
                     <span>Trazabilidad y custodia de ejemplares</span>
                 </div>
                 <!-- Minimal slider indicator dots -->
@@ -581,7 +583,9 @@
                                     <span class="text-dark small fw-medium">{{ p.fecha_vencimiento }}</span>
                                 </td>
                                 <td>
-                                    {% if p.fecha_devolucion %}
+                                    {% if p.cancelado %}
+                                    <span class="badge bg-secondary text-white">Cancelado</span>
+                                    {% elif p.fecha_devolucion %}
                                     <span class="badge bg-success text-white">Devuelto</span>
                                     {% elif p.esta_vencido() %}
                                     <span class="badge bg-danger text-white">Vencido</span>

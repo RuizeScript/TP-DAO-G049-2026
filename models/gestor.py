@@ -3,7 +3,7 @@ from models.enum import EstadoEjemplar, Estado
 from models.entidades import Sede, Socio, Libro, Ejemplar
 from models.operaciones import Prestamo, Reserva
 from models.horarios import normalizar_horarios
-from models.remito import Remito, Creado, Recibido
+from models.remito import Remito, Creado, Recibido, Cancelado
 from models.excepciones import (
     BibliotecaExcepcion,
     EjemplarNoDisponibleError,
@@ -214,6 +214,59 @@ class GestorBiblioteca:
             sede.dar_de_baja(comentarios)
         self.sede_dao.actualizar_estado(id_sede, sede.activa, sede.comentarios)
 
+    def editar_sede(self, id_sede: str, nombre: str, direccion: str, contacto: str, horarios: str,
+                    comentarios: str = None) -> Sede:
+        """
+        Modifica los datos de una sede (el ID no se cambia). Valida todo antes de tocar nada.
+        'comentarios' es el motivo de la baja: solo se puede editar si la sede está inactiva, y no puede quedar vacío.
+        """
+        sede = self.obtener_sede(id_sede)
+        nombre, direccion, contacto = (nombre or "").strip(), (direccion or "").strip(), (contacto or "").strip()
+        if not nombre or not direccion or not contacto:
+            raise BibliotecaExcepcion("Nombre, dirección y contacto son obligatorios.")
+        horarios = normalizar_horarios(horarios)
+
+        if sede.activa:
+            motivo = ""
+        else:
+            motivo = (comentarios if comentarios is not None else sede.comentarios or "").strip()
+            if not motivo:
+                raise BibliotecaExcepcion("Una sede dada de baja necesita un motivo (comentarios).")
+
+        sede.nombre, sede.direccion, sede.contacto, sede.horarios, sede.comentarios = (
+            nombre, direccion, contacto, horarios, motivo
+        )
+        self.sede_dao.actualizar(sede)
+        return sede
+
+    def referencias_de_sede(self, id_sede: str) -> list:
+        """Qué registros usan la sede (p. ej. ['3 ejemplares', '1 préstamo']); lista vacía si no la usa nadie."""
+        usos = (
+            ("ejemplar", "ejemplares", sum(1 for e in self.ejemplares.values() if e.sede.id_sede == id_sede)),
+            ("préstamo", "préstamos", sum(
+                1 for p in self.prestamos if id_sede in (p.sede_origen.id_sede, p.sede_destino.id_sede))),
+            ("reserva", "reservas", sum(1 for r in self.reservas if r.sede.id_sede == id_sede)),
+            ("remito", "remitos", sum(
+                1 for r in self.remitos if id_sede in (r.sede_origen.id_sede, r.sede_destino.id_sede))),
+        )
+        return [f"{n} {singular if n == 1 else plural}" for singular, plural, n in usos if n]
+
+    def eliminar_sede(self, id_sede: str) -> Sede:
+        """
+        Borra la sede definitivamente de la base. Si algún ejemplar, préstamo, reserva o remito la usa se rechaza
+        (borrarla dejaría esos registros apuntando a una sede inexistente): en ese caso corresponde inhabilitarla.
+        """
+        sede = self.obtener_sede(id_sede)
+        usos = self.referencias_de_sede(id_sede)
+        if usos:
+            raise BibliotecaExcepcion(
+                f"No se puede eliminar la sede '{sede.nombre}': tiene {', '.join(usos)} asociados. "
+                "Inhabilitala para conservar el historial."
+            )
+        self.sede_dao.eliminar(id_sede)
+        del self.sedes[id_sede]
+        return sede
+
     # --- 2. Administrar Socios ---
     def agregar_socio(self, socio: Socio) -> Socio:
         if not socio.id_socio:
@@ -297,6 +350,11 @@ class GestorBiblioteca:
 
         return prestamo
 
+    def prestamos_recientes(self) -> list:
+        """Préstamos del más nuevo al más viejo: por fecha de inicio y, a igual fecha, el último registrado primero."""
+        # sorted() es estable: partiendo de la lista invertida, los de la misma fecha conservan "último registrado primero"
+        return sorted(reversed(self.prestamos), key=lambda p: p.fecha_inicio, reverse=True)
+
     def registrar_devolucion(self, id_prestamo: str, fecha_devolucion: date, estado_fisico: Estado):
         prestamo = next((p for p in self.prestamos if p.id_prestamo == id_prestamo), None)
         if not prestamo:
@@ -328,11 +386,11 @@ class GestorBiblioteca:
         )
 
     def remito_en_curso_de(self, id_ejemplar: str):
-        """Remito aún no recibido en el que viaja el ejemplar, o None si no está en ninguno."""
+        """Remito todavía vigente (ni recibido ni cancelado) en el que viaja el ejemplar, o None si no está en ninguno."""
         return next(
             (
                 r for r in reversed(self.remitos)
-                if not isinstance(r.estado_actual, Recibido)
+                if not isinstance(r.estado_actual, (Recibido, Cancelado))
                 and any(e.id_ejemplar == id_ejemplar for e in r.ejemplares)
             ),
             None
@@ -393,6 +451,60 @@ class GestorBiblioteca:
             self.ejemplar_dao.actualizar(ejemplar)
         self._persistir_ultimo_evento(remito, fecha_hora)
 
+    def _prestamo_abierto_de(self, ejemplar: Ejemplar):
+        """Préstamo vigente (ni devuelto ni cancelado) de ese ejemplar, o None."""
+        return next((p for p in self.prestamos if p.ejemplar is ejemplar and p.esta_abierto), None)
+
+    def _prestamo_vigente_del_envio(self, ejemplar: Ejemplar, remito: Remito):
+        """Préstamo vigente que está esperando este ejemplar en este remito (misma ruta de origen y destino), o None."""
+        prestamo = self._prestamo_abierto_de(ejemplar)
+        if (
+            prestamo is not None
+            and prestamo.sede_origen.id_sede == remito.sede_origen.id_sede
+            and prestamo.sede_destino.id_sede == remito.sede_destino.id_sede
+        ):
+            return prestamo
+        return None
+
+    def prestamos_de_remito(self, remito: Remito) -> list:
+        """Préstamos vigentes que esperan este envío (los que se cancelarían si el remito se cancela)."""
+        return [p for p in (self._prestamo_vigente_del_envio(e, remito) for e in remito.ejemplares) if p]
+
+    def cancelar_remito(self, id_remito: str, motivo: str, fecha_hora: datetime = None) -> dict:
+        """
+        Cancela el remito: pasa a Cancelado, un estado FINAL al que se llega desde Creado, Empaquetado o Despachado
+        (un remito ya Recibido o ya Cancelado no se puede cancelar). Consecuencias:
+          - el motivo (obligatorio) queda en la trazabilidad;
+          - los ejemplares vuelven a estar Disponibles en su sede de origen (la sede de un ejemplar solo cambia al recibirlo);
+          - los préstamos inter-sede que esperaban ese envío se cancelan: no vencen ni sancionan al socio.
+        Devuelve un resumen ({"ejemplares": [...], "prestamos": [...]}) para informar a quien lo cancela.
+        """
+        remito = self.obtener_remito(id_remito)
+        remito.cancelar(motivo)          # valida el motivo y que el remito no esté ya en un estado final
+        motivo = remito.motivo_cancelacion
+
+        ejemplares_liberados, prestamos_cancelados = [], []
+        for ejemplar in remito.ejemplares:
+            prestamo_del_envio = self._prestamo_vigente_del_envio(ejemplar, remito)
+            if prestamo_del_envio is not None:
+                prestamo_del_envio.cancelar(f"Remito {remito.id_remito} cancelado: {motivo}")
+                self.prestamo_dao.actualizar_cancelacion(prestamo_del_envio.id_prestamo, prestamo_del_envio.motivo_cancelacion)
+                prestamos_cancelados.append(prestamo_del_envio)
+                liberar = True
+            else:
+                # Sin préstamo vigente solo se libera si el estado lo puso este envío (en preparación / en tránsito).
+                # Si lo retiene otro préstamo vigente (p. ej. uno nuevo después de una devolución anticipada), no se toca.
+                liberar = self._prestamo_abierto_de(ejemplar) is None and ejemplar.estado_ejemplar in (
+                    EstadoEjemplar.EN_PREPARACION, EstadoEjemplar.EN_TRANSITO
+                )
+            if liberar:
+                ejemplar.estado_ejemplar = EstadoEjemplar.DISPONIBLE
+                self.ejemplar_dao.actualizar(ejemplar)
+                ejemplares_liberados.append(ejemplar)
+
+        self._persistir_ultimo_evento(remito, fecha_hora)
+        return {"ejemplares": ejemplares_liberados, "prestamos": prestamos_cancelados}
+
     # --- 6. Consultar Disponibilidad ---
     def consultar_disponibilidad(self, isbn: str, id_sede: str = None):
         disponibles = [
@@ -402,6 +514,13 @@ class GestorBiblioteca:
         if id_sede:
             disponibles = [e for e in disponibles if e.sede.id_sede == id_sede]
         return disponibles
+
+    def ejemplares_prestables(self) -> list:
+        """Ejemplares que hoy se pueden prestar: disponibles y en una sede activa. Orden: título, sede e ID."""
+        return sorted(
+            (e for e in self.ejemplares.values() if e.esta_disponible() and e.sede.activa),
+            key=lambda e: (e.libro.titulo.lower(), e.libro.isbn, e.sede.nombre.lower(), e.id_ejemplar)
+        )
 
     # --- 7. Gestionar Reservas ---
     def crear_reserva(

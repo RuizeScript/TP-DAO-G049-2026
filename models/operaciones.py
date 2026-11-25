@@ -1,6 +1,7 @@
 from datetime import date, timedelta
 from models.enum import EstadoEjemplar, Estado
 from models.excepciones import (
+    BibliotecaExcepcion,
     SocioInhabilitadoError,
     EjemplarNoDisponibleError,
     SedeDadaDeBajaError,
@@ -52,6 +53,9 @@ class Prestamo:
         self.fecha_vencimiento: date = self.fecha_inicio + timedelta(days=dias_prestamo)
         self.fecha_devolucion: date = None
         self.estado_devuelto: Estado = None
+        # Un préstamo inter-sede se cancela cuando se cancela el remito en el que viajaba su ejemplar
+        self.cancelado: bool = False
+        self.motivo_cancelacion: str = ""
 
         # Al concretar el préstamo, el ejemplar pasa a estar PRESTADO
         self.ejemplar.estado_ejemplar = EstadoEjemplar.PRESTADO
@@ -62,16 +66,35 @@ class Prestamo:
         return self.sede_origen.id_sede != self.sede_destino.id_sede
 
     def esta_vencido(self, fecha_actual: date = None) -> bool:
-        """Chequea si ya venció y todavía no fue devuelto."""
+        """Chequea si ya venció y todavía no fue devuelto. Un préstamo cancelado nunca está vencido."""
         if fecha_actual is None:
             fecha_actual = date.today()
-        return not self.fecha_devolucion and fecha_actual > self.fecha_vencimiento
+        return not self.fecha_devolucion and not self.cancelado and fecha_actual > self.fecha_vencimiento
+
+    @property
+    def esta_abierto(self) -> bool:
+        """Sigue vigente: ni devuelto ni cancelado."""
+        return self.fecha_devolucion is None and not self.cancelado
+
+    def cancelar(self, motivo: str):
+        """
+        Anula el préstamo (el socio nunca recibió el libro). No cuenta como vencido ni genera sanción.
+        Solo se puede cancelar uno que siga abierto; el ejemplar lo libera quien cancela (el gestor).
+        """
+        if self.cancelado:
+            raise BibliotecaExcepcion(f"El préstamo {self.id_prestamo} ya estaba cancelado.")
+        if self.fecha_devolucion is not None:
+            raise BibliotecaExcepcion(f"El préstamo {self.id_prestamo} ya fue devuelto: no se puede cancelar.")
+        self.cancelado = True
+        self.motivo_cancelacion = (motivo or "").strip()
 
     def registrar_devolucion(self, fecha_devolucion: date, estado_fisico: Estado):
         """
-        Registra la entrega física del libro, actualiza su estado 
+        Registra la entrega física del libro, actualiza su estado
         y penaliza al socio si hubo demora.
         """
+        if self.cancelado:
+            raise BibliotecaExcepcion(f"El préstamo {self.id_prestamo} fue cancelado: no hay nada que devolver.")
         self.fecha_devolucion = fecha_devolucion
         self.estado_devuelto = estado_fisico
         self.ejemplar.estado_ejemplar = EstadoEjemplar.DISPONIBLE
@@ -82,7 +105,12 @@ class Prestamo:
         # Si se devolvió pasado el vencimiento, aplicamos sanción
         if fecha_devolucion > self.fecha_vencimiento:
             dias_retraso = (fecha_devolucion - self.fecha_vencimiento).days
-            self.socio.penalizado_hasta = fecha_devolucion + timedelta(days=dias_retraso * FACTOR_SANCION_POR_MORA)
+            nueva_sancion = fecha_devolucion + timedelta(days=dias_retraso * FACTOR_SANCION_POR_MORA)
+            # Si el socio ya tiene una sanción, queda siempre la que termina más tarde: las sanciones
+            # no se pisan (una devolución con poca mora nunca le acorta una sanción mayor que ya tenía).
+            actual = self.socio.penalizado_hasta
+            if actual is None or nueva_sancion > actual:
+                self.socio.penalizado_hasta = nueva_sancion
 
     def __str__(self) -> str:
         return f"Préstamo {self.id_prestamo}: Socio {self.socio.dni}, Ejemplar {self.ejemplar.id_ejemplar}, Vence: {self.fecha_vencimiento}"

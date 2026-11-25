@@ -20,7 +20,8 @@
                         </div>
                         <div class="col-md-8">
                             <label class="form-label small fw-semibold">Socio Solicitante</label>
-                            <select name="id_socio" class="form-select" required>
+                            {# Si el ejemplar ya vino elegido desde el Catálogo, lo que falta cargar empieza por el socio #}
+                            <select name="id_socio" class="form-select" required {% if id_ejemplar_preseleccionado %}autofocus{% endif %}>
                                 <option value="">-- Seleccionar Socio --</option>
                                 {% for s in socios %}
                                 <option value="{{ s.id_socio }}">
@@ -31,30 +32,29 @@
                         </div>
                         <div class="col-md-12">
                             <label class="form-label small fw-semibold">Ejemplar Físico a Prestar</label>
-                            <select name="id_ejemplar" class="form-select" required>
+                            <select name="id_ejemplar" id="ejemplarPrestamo" class="form-select" required>
                                 <option value="">-- Seleccionar Ejemplar Disponible --</option>
+                                {# Solo ejemplares prestables (disponibles y en sede activa). Cada opción dice libro, sede y estado, así lo
+                                   elegido se lee completo en el select cerrado. data-sede se vuelca sola en "Sede de Origen". #}
                                 {% for e in ejemplares %}
-                                <option value="{{ e.id_ejemplar }}">
-                                    [{{ e.id_ejemplar }}] {{ e.libro.titulo }} (Ubicación: {{ e.sede.nombre }}) - Estado: {{ e.estado_ejemplar.value }}
+                                <option value="{{ e.id_ejemplar }}" data-sede="{{ e.sede.nombre }}" {% if e.id_ejemplar == id_ejemplar_preseleccionado %}selected{% endif %}>
+                                    [{{ e.id_ejemplar }}] {{ e.libro.titulo }} (Ubicación: {{ e.sede.nombre }}) - Estado: {{ e.estado.value }}
                                 </option>
                                 {% endfor %}
                             </select>
                         </div>
                         <div class="col-md-6">
-                            <label class="form-label small fw-semibold">Sede de Origen (donde está el libro)</label>
-                            <select name="id_sede_origen" class="form-select" required>
-                                <option value="">-- Sede Origen --</option>
-                                {% for s in sedes %}
-                                <option value="{{ s.id_sede }}">{{ s.nombre }} {% if not s.activa %}(Inactiva){% endif %}</option>
-                                {% endfor %}
-                            </select>
+                            <label class="form-label small fw-semibold">Sede de Origen <span class="badge bg-secondary-subtle text-muted fw-normal">Automática</span></label>
+                            <!-- Solo lectura y sin name: no se envía. El servidor toma la sede del propio ejemplar -->
+                            <input type="text" id="sedeOrigenPrestamo" class="form-control bg-light text-muted" readonly tabindex="-1" placeholder="Se completa al elegir el ejemplar">
                         </div>
                         <div class="col-md-6">
                             <label class="form-label small fw-semibold">Sede de Destino (retiro del socio)</label>
                             <select name="id_sede_destino" class="form-select">
                                 <option value="">-- Misma que Origen (Préstamo Local) --</option>
-                                {% for s in sedes %}
-                                <option value="{{ s.id_sede }}">{{ s.nombre }} {% if not s.activa %}(Inactiva){% endif %}</option>
+                                {# Solo sedes activas: a una sede dada de baja no se puede enviar #}
+                                {% for s in sedes if s.activa %}
+                                <option value="{{ s.id_sede }}">{{ s.nombre }}</option>
                                 {% endfor %}
                             </select>
                         </div>
@@ -130,33 +130,63 @@
         <h5 class="fw-bold mb-0 text-dark"><i class="bi bi-clock-history text-primary me-2"></i>Historial y Estado de Préstamos</h5>
         <span class="badge bg-secondary">{{ prestamos|length }} Préstamos</span>
     </div>
+
+    <!-- Buscador y filtros: trabajan en vivo sobre la tabla, sin recargar la página -->
+    <div class="px-4 pb-3 d-flex flex-wrap align-items-center gap-2">
+        <div class="position-relative flex-grow-1" style="min-width: 240px; max-width: 380px;">
+            <i class="bi bi-search position-absolute top-50 translate-middle-y text-muted" style="left: 1rem; pointer-events: none;"></i>
+            <input type="search" id="buscarPrestamo" class="form-control form-control-sm" style="padding-left: 2.4rem;" placeholder="Buscar por socio, DNI, libro, ejemplar o sede..." autocomplete="off">
+        </div>
+        <select id="filtroEstadoPrestamo" class="form-select form-select-sm w-auto" style="min-width: 14rem;" title="Filtrar por devolución">
+            <option value="">Todas las devoluciones</option>
+            <option value="sin-devolver">Sin devolver</option>
+            <option value="en-curso">En curso</option>
+            <option value="vencido">Vencidos</option>
+            <option value="devuelto">Devueltos</option>
+            <option value="cancelado">Cancelados</option>
+        </select>
+        <select id="filtroSedePrestamo" class="form-select form-select-sm w-auto" style="min-width: 12rem;" title="Filtrar por sede (origen o destino)">
+            <option value="">Todas las sedes</option>
+            {% for s in sedes %}
+            <option value="{{ s.id_sede }}">{{ s.nombre }}</option>
+            {% endfor %}
+        </select>
+        <button type="button" id="limpiarFiltrosPrestamo" class="btn btn-sm btn-outline-secondary" title="Quitar filtros y volver al orden original">
+            <i class="bi bi-x-circle me-1"></i> Limpiar
+        </button>
+        <span id="contadorPrestamos" class="small text-muted ms-auto"></span>
+    </div>
+
     <div class="card-body p-0">
         <div class="table-responsive">
-            <table class="table table-hover align-middle mb-0">
+            <table id="tablaPrestamos" class="table table-hover align-middle mb-0">
                 <thead class="table-light">
                     <tr>
-                        <th>ID</th>
-                        <th>Socio</th>
-                        <th>Ejemplar y Libro</th>
-                        <th>Trayecto Sedes</th>
-                        <th>Inicio / Vencimiento</th>
-                        <th>Devolución</th>
+                        <!-- Click en una columna: ordena ascendente, otro click descendente, un tercero vuelve al orden original -->
+                        <th class="ordenable" data-col="0" tabindex="0" aria-sort="none">ID <i class="bi bi-arrow-down-up ms-1 small"></i></th>
+                        <th class="ordenable" data-col="1" tabindex="0" aria-sort="none">Socio <i class="bi bi-arrow-down-up ms-1 small"></i></th>
+                        <th class="ordenable" data-col="2" tabindex="0" aria-sort="none">Ejemplar y Libro <i class="bi bi-arrow-down-up ms-1 small"></i></th>
+                        <th class="ordenable" data-col="3" tabindex="0" aria-sort="none">Trayecto Sedes <i class="bi bi-arrow-down-up ms-1 small"></i></th>
+                        <th class="ordenable" data-col="4" tabindex="0" aria-sort="none">Inicio / Vencimiento <i class="bi bi-arrow-down-up ms-1 small"></i></th>
+                        <th class="ordenable" data-col="5" tabindex="0" aria-sort="none">Devolución <i class="bi bi-arrow-down-up ms-1 small"></i></th>
                         <th>Acción de Devolución</th>
                     </tr>
                 </thead>
                 <tbody>
                     {% for p in prestamos %}
-                    <tr>
-                        <td class="fw-bold">{{ p.id_prestamo }}</td>
-                        <td>
+                    {% set estado = 'cancelado' if p.cancelado else ('devuelto' if p.fecha_devolucion else ('vencido' if p.esta_vencido() else 'en-curso')) %}
+                    {# data-estado y data-sedes alimentan los filtros; data-sort de cada celda es su clave de ordenamiento #}
+                    <tr data-estado="{{ estado }}" data-sedes="{{ p.sede_origen.id_sede }} {{ p.sede_destino.id_sede }}">
+                        <td class="fw-bold" data-sort="{{ p.id_prestamo }}">{{ p.id_prestamo }}</td>
+                        <td data-sort="{{ p.socio.apellido }} {{ p.socio.nombre }}">
                             <div class="fw-semibold">{{ p.socio.nombre }} {{ p.socio.apellido }}</div>
                             <div class="text-muted small">DNI: {{ p.socio.dni }}</div>
                         </td>
-                        <td>
+                        <td data-sort="{{ p.ejemplar.libro.titulo }} {{ p.ejemplar.id_ejemplar }}">
                             <div class="fw-medium text-dark">{{ p.ejemplar.libro.titulo }}</div>
                             <span class="badge bg-light text-dark border">{{ p.ejemplar.id_ejemplar }}</span>
                         </td>
-                        <td>
+                        <td data-sort="{{ p.sede_origen.nombre }} {{ p.sede_destino.nombre }}">
                             {% if p.es_interbibliotecario %}
                                 <span class="badge bg-warning-subtle text-dark border border-warning-subtle">
                                     {{ p.sede_origen.nombre }} &rarr; {{ p.sede_destino.nombre }}
@@ -167,14 +197,18 @@
                                 </span>
                             {% endif %}
                         </td>
-                        <td>
+                        <td data-sort="{{ p.fecha_inicio.isoformat() }}">
                             <div class="small">Inicio: {{ p.fecha_inicio }}</div>
                             <div class="small fw-semibold {% if p.esta_vencido() %}text-danger{% else %}text-muted{% endif %}">
                                 Vence: {{ p.fecha_vencimiento }}
                             </div>
                         </td>
-                        <td>
-                            {% if p.fecha_devolucion %}
+                        {# Devolución: primero los vencidos, luego en curso, devueltos y al final los cancelados (dentro de cada grupo, por fecha) #}
+                        <td data-sort="{{ {'vencido': 0, 'en-curso': 1, 'devuelto': 2, 'cancelado': 3}[estado] }}-{{ (p.fecha_devolucion or p.fecha_vencimiento).isoformat() }}">
+                            {% if p.cancelado %}
+                                <span class="badge bg-secondary"><i class="bi bi-x-octagon"></i> Cancelado</span>
+                                <div class="small text-muted">{{ p.motivo_cancelacion }}</div>
+                            {% elif p.fecha_devolucion %}
                                 <span class="badge bg-success"><i class="bi bi-check2"></i> Devuelto ({{ p.fecha_devolucion }})</span>
                                 <div class="small text-muted">Estado: {{ p.estado_devuelto.value }}</div>
                             {% elif p.esta_vencido() %}
@@ -184,8 +218,8 @@
                             {% endif %}
                         </td>
                         <td>
-                            {% if not p.fecha_devolucion %}
-                            <!-- Botón modal para registrar devolución -->
+                            {% if p.esta_abierto %}
+                            <!-- Botón modal para registrar devolución (solo si sigue vigente: ni devuelto ni cancelado) -->
                             <button type="button" class="btn btn-sm btn-outline-success" data-bs-toggle="modal" data-bs-target="#modalDevolucion{{ p.id_prestamo }}">
                                 <i class="bi bi-box-arrow-in-down me-1"></i> Devolver
                             </button>
@@ -236,6 +270,9 @@
                         <td colspan="7" class="text-center py-4 text-muted">No se registraron préstamos aún.</td>
                     </tr>
                     {% endfor %}
+                    <tr id="sinResultadosPrestamos" class="d-none">
+                        <td colspan="7" class="text-center py-4 text-muted">Ningún préstamo coincide con la búsqueda y los filtros elegidos.</td>
+                    </tr>
                 </tbody>
             </table>
         </div>
@@ -297,4 +334,125 @@
         </div>
     </div>
 </div>
+
+<style>
+    #tablaPrestamos th.ordenable { cursor: pointer; user-select: none; white-space: nowrap; }
+    #tablaPrestamos th.ordenable i { opacity: .35; }
+    #tablaPrestamos th.ordenable:hover i { opacity: .8; }
+    #tablaPrestamos th.ordenable.activa i { opacity: 1; color: var(--bs-primary); }
+</style>
+
+<script>
+    // Historial de préstamos: búsqueda en vivo, filtros por devolución y por sede, y columnas ordenables.
+    // Todo ocurre en el navegador sobre las filas ya renderizadas (data-estado, data-sedes y data-sort de cada celda).
+    (function () {
+        var tabla = document.getElementById("tablaPrestamos");
+        var cuerpo = tabla.tBodies[0];
+        var buscador = document.getElementById("buscarPrestamo");
+        var filtroEstado = document.getElementById("filtroEstadoPrestamo");
+        var filtroSede = document.getElementById("filtroSedePrestamo");
+        var contador = document.getElementById("contadorPrestamos");
+        var sinResultados = document.getElementById("sinResultadosPrestamos");
+        var cabeceras = Array.prototype.slice.call(tabla.querySelectorAll("th.ordenable"));
+
+        // sin mayúsculas ni tildes, para que "tevez" encuentre "Tévez" y "patricios" encuentre "Patricios"
+        function normalizar(texto) {
+            return texto.toLowerCase().normalize("NFD").replace(/[̀-ͯ]/g, "").replace(/\s+/g, " ").trim();
+        }
+
+        // Una entrada por préstamo: la fila, su posición original (el más nuevo primero), el texto buscable y sus claves de orden
+        var registros = Array.prototype.slice.call(cuerpo.querySelectorAll("tr[data-estado]")).map(function (fila, i) {
+            var texto = "", claves = [];
+            for (var c = 0; c < fila.cells.length - 1; c++) {          // la última celda (acción) trae el modal de devolución: no se busca ahí
+                texto += " " + fila.cells[c].textContent;
+                claves.push(fila.cells[c].dataset.sort || "");
+            }
+            return {
+                fila: fila, posicion: i, texto: normalizar(texto), claves: claves,
+                estado: fila.dataset.estado, sedes: fila.dataset.sedes.split(" ")
+            };
+        });
+
+        var orden = { columna: null, sentido: 0 };                      // sentido: 1 ascendente, -1 descendente, 0 = orden original
+
+        function comparar(a, b) {
+            if (orden.sentido === 0) { return a.posicion - b.posicion; }
+            var r = a.claves[orden.columna].localeCompare(b.claves[orden.columna], "es", { numeric: true, sensitivity: "base" });
+            return r !== 0 ? r * orden.sentido : a.posicion - b.posicion;
+        }
+
+        function ordenar() {
+            registros.slice().sort(comparar).forEach(function (r) { cuerpo.appendChild(r.fila); });
+            cuerpo.appendChild(sinResultados);                           // el aviso "sin resultados" queda siempre al final
+            cabeceras.forEach(function (th) {
+                var activa = orden.sentido !== 0 && Number(th.dataset.col) === orden.columna;
+                var icono = th.querySelector("i");
+                th.classList.toggle("activa", activa);
+                th.setAttribute("aria-sort", !activa ? "none" : (orden.sentido === 1 ? "ascending" : "descending"));
+                icono.className = "bi ms-1 small " + (!activa ? "bi-arrow-down-up" : (orden.sentido === 1 ? "bi-caret-up-fill" : "bi-caret-down-fill"));
+            });
+        }
+
+        function coincideEstado(estado, elegido) {
+            if (!elegido) { return true; }
+            // "Sin devolver" = los que siguen vigentes (en curso o vencidos); ni los devueltos ni los cancelados
+            return elegido === "sin-devolver" ? (estado === "en-curso" || estado === "vencido") : estado === elegido;
+        }
+
+        function filtrar() {
+            var palabras = normalizar(buscador.value).split(" ").filter(Boolean);   // "dune norte" exige las dos palabras
+            var visibles = 0;
+            registros.forEach(function (r) {
+                var ok = coincideEstado(r.estado, filtroEstado.value)
+                    && (!filtroSede.value || r.sedes.indexOf(filtroSede.value) !== -1)
+                    && palabras.every(function (p) { return r.texto.indexOf(p) !== -1; });
+                r.fila.classList.toggle("d-none", !ok);
+                if (ok) { visibles++; }
+            });
+            sinResultados.classList.toggle("d-none", visibles !== 0 || registros.length === 0);
+            contador.textContent = visibles === registros.length
+                ? registros.length + " préstamos"
+                : "Mostrando " + visibles + " de " + registros.length;
+        }
+
+        cabeceras.forEach(function (th) {
+            function alternar() {
+                var columna = Number(th.dataset.col);
+                if (orden.columna !== columna) { orden = { columna: columna, sentido: 1 }; }
+                else if (orden.sentido === 1) { orden.sentido = -1; }
+                else { orden = { columna: null, sentido: 0 }; }
+                ordenar();
+            }
+            th.addEventListener("click", alternar);
+            th.addEventListener("keydown", function (e) {
+                if (e.key === "Enter" || e.key === " ") { e.preventDefault(); alternar(); }
+            });
+        });
+
+        buscador.addEventListener("input", filtrar);
+        filtroEstado.addEventListener("change", filtrar);
+        filtroSede.addEventListener("change", filtrar);
+        document.getElementById("limpiarFiltrosPrestamo").addEventListener("click", function () {
+            buscador.value = ""; filtroEstado.value = ""; filtroSede.value = "";
+            orden = { columna: null, sentido: 0 };
+            ordenar(); filtrar();
+        });
+
+        filtrar();
+    })();
+</script>
+
+<script>
+    // La sede de origen no se elige: es donde está el ejemplar, así que se completa sola al seleccionarlo
+    (function () {
+        var ejemplar = document.getElementById("ejemplarPrestamo");
+        var origen = document.getElementById("sedeOrigenPrestamo");
+        function mostrarOrigen() {
+            var opcion = ejemplar.options[ejemplar.selectedIndex];
+            origen.value = opcion && opcion.value ? opcion.dataset.sede : "";
+        }
+        ejemplar.addEventListener("change", mostrarOrigen);
+        mostrarOrigen();
+    })();
+</script>
 {% endblock %}

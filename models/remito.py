@@ -1,9 +1,14 @@
 from abc import ABC, abstractmethod
 from datetime import datetime
-from models.excepciones import TransicionInvalidaError
+from models.excepciones import BibliotecaExcepcion, TransicionInvalidaError
 
-#Cualqioer estado q exista tiene q tener los metodos agregar_ejemplar, empaquetar, despachar y recibir,
+#Cualqioer estado q exista tiene q tener los metodos agregar_ejemplar, empaquetar, despachar, recibir y cancelar,
 #por eso se define la clase abstracta EstadoRemito
+#
+# Ciclo de vida:  Creado -> Empaquetado -> Despachado -> Recibido
+#                    \            |             /
+#                     +-----> Cancelado <------+     (se puede cancelar desde cualquier estado que todavía no sea final)
+# Recibido y Cancelado son estados FINALES: desde ahí no se puede hacer nada más.
 class EstadoRemito(ABC):
     @abstractmethod
     def agregar_ejemplar(self, remito, ejemplar):
@@ -20,6 +25,15 @@ class EstadoRemito(ABC):
     @abstractmethod
     def recibir(self, remito):
         pass
+
+    @abstractmethod
+    def cancelar(self, remito, motivo):
+        pass
+
+    def _pasar_a_cancelado(self, remito, motivo):
+        # Lo comparten los tres estados desde los que se puede cancelar; el motivo queda en la trazabilidad
+        remito.estado_actual = Cancelado()
+        remito.registrar_trazabilidad(motivo)
 
     def __str__(self):
         return self.__class__.__name__
@@ -46,6 +60,9 @@ class Creado(EstadoRemito):
     def recibir(self, remito):
         raise TransicionInvalidaError("No se puede recibir un remito que no está empaquetado")
 
+    def cancelar(self, remito, motivo):
+        self._pasar_a_cancelado(remito, motivo)
+
 
 class Empaquetado(EstadoRemito):
     def agregar_ejemplar(self, remito, ejemplar):
@@ -60,6 +77,9 @@ class Empaquetado(EstadoRemito):
 
     def recibir(self, remito):
         raise TransicionInvalidaError("No se puede recibir un remito que no ha sido despachado")
+
+    def cancelar(self, remito, motivo):
+        self._pasar_a_cancelado(remito, motivo)
 
 
 class Despachado(EstadoRemito):
@@ -76,6 +96,10 @@ class Despachado(EstadoRemito):
         remito.estado_actual = Recibido()
         remito.registrar_trazabilidad("Recibido")
 
+    def cancelar(self, remito, motivo):
+        # En tránsito también se puede cancelar (se cayó una sede, falló el transporte, etc.)
+        self._pasar_a_cancelado(remito, motivo)
+
 
 class Recibido(EstadoRemito):
     def agregar_ejemplar(self, remito, ejemplar):
@@ -89,6 +113,27 @@ class Recibido(EstadoRemito):
 
     def recibir(self, remito):
         raise TransicionInvalidaError("El remito ya ha sido recibido")
+
+    def cancelar(self, remito, motivo):
+        raise TransicionInvalidaError("No se puede cancelar un remito que ya fue recibido: el envío ya se completó")
+
+
+class Cancelado(EstadoRemito):
+    # Estado final: el envío se anuló y no admite ninguna operación más.
+    def agregar_ejemplar(self, remito, ejemplar):
+        raise TransicionInvalidaError("No se pueden agregar ejemplares a un remito cancelado")
+
+    def empaquetar(self, remito):
+        raise TransicionInvalidaError("No se puede empaquetar un remito cancelado")
+
+    def despachar(self, remito):
+        raise TransicionInvalidaError("No se puede despachar un remito cancelado")
+
+    def recibir(self, remito):
+        raise TransicionInvalidaError("No se puede recibir un remito cancelado")
+
+    def cancelar(self, remito, motivo):
+        raise TransicionInvalidaError("El remito ya fue cancelado")
 
 
 class Remito:
@@ -118,6 +163,20 @@ class Remito:
     def historial_trazabilidad(self):
         return self.trazabilidad
 
+    @property
+    def esta_cancelado(self) -> bool:
+        return isinstance(self.estado_actual, Cancelado)
+
+    @property
+    def motivo_cancelacion(self):
+        """Por qué se canceló (el último evento de la trazabilidad); None si el remito no está cancelado."""
+        return self.trazabilidad[-1]["observacion"] if self.esta_cancelado else None
+
+    @property
+    def fue_despachado(self) -> bool:
+        """True si el remito llegó a salir de la sede de origen (aunque después se haya cancelado en el camino)."""
+        return any(evento["estado"] == "Despachado" for evento in self.trazabilidad)
+
     def registrar_trazabilidad(self, observacion: str):
         registro = {
             "estado": str(self.estado_actual),
@@ -138,6 +197,13 @@ class Remito:
 
     def recibir(self):
         self.estado_actual.recibir(self)
+
+    def cancelar(self, motivo: str):
+        # El motivo es obligatorio: queda como observación del evento "Cancelado" en la trazabilidad
+        motivo = (motivo or "").strip()
+        if not motivo:
+            raise BibliotecaExcepcion("Indicá el motivo de la cancelación del remito.")
+        self.estado_actual.cancelar(self, motivo)
 
     def __str__(self):
         return f"Remito {self.id_remito} - Estado: {self.estado_actual} - {self.cantidad_ejemplares} ejemplar(es)"

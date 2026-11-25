@@ -258,14 +258,18 @@ def _seccion_prestamos_activos_transito(rep):
 def _seccion_morosidad(rep):
     elementos = _titulo_seccion(
         "2. Morosidad y sanciones acumuladas",
-        f"Sanción: 2 días de inhabilitación por cada día de retraso. Fecha de corte: {_fecha(rep['fecha_corte'])}."
+        "Sanción: 2 días de inhabilitación por cada día de retraso, contados desde la devolución. Si el socio ya está "
+        "sancionado se mantiene la que termina más tarde: las sanciones no se acumulan ni se acortan. "
+        f"Fecha de corte: {_fecha(rep['fecha_corte'])}."
     )
     pg = rep["por_gravedad"]
     elementos.append(_kpis([
         ("Préstamos vencidos", rep["total_vencidos"],
          f"{pg['Grave']} grave(s), {pg['Moderada']} moderada(s), {pg['Leve']} leve(s)"),
         ("Mora promedio", f"{rep['mora_promedio']} días", f"máxima: {rep['mora_maxima']} días"),
-        ("Sanción proyectada", f"{rep['sancion_proyectada_total']} días", "si todos devolvieran hoy"),
+        ("Sanciones si devolvieran hoy", f"{rep['socios_a_sancionar']} socio(s)",
+         (f"{rep['sancion_proyectada_max_dias']} días la más larga" if rep["socios_a_sancionar"] else "ninguna por aplicar")
+         + (f", {rep['socios_sin_efecto']} sin efecto (ya sancionados por más tiempo)" if rep["socios_sin_efecto"] else "")),
         ("Incumplimiento histórico", f"{rep['tasa_incumplimiento']}%",
          f"sobre {rep['total_resueltos']} préstamos resueltos ({rep['devueltos_tarde']} devueltos tarde)"),
         ("Socios sancionados", len(rep["sancionados"]), f"{rep['pct_socios_sancionados']}% del padrón"),
@@ -283,7 +287,10 @@ def _seccion_morosidad(rep):
         filas = [
             [d["prestamo"].id_prestamo, f"{d['prestamo'].socio.nombre} {d['prestamo'].socio.apellido}",
              d["prestamo"].ejemplar.libro.titulo, f"{d['dias_retraso']} d", d["gravedad"],
-             f"{d['sancion_dias']} d (hasta {_fecha(d['sancion_hasta'])})"]
+             (f"{d['sancion_dias']} d (hasta {_fecha(d['sancion_hasta'])})"
+              + (f", amplía la vigente (hasta {_fecha(d['sancion_vigente_hasta'])})" if d["sancion_vigente_hasta"] else "")
+              if d["extiende_sancion"]
+              else f"Sin efecto: ya sancionado hasta {_fecha(d['sancion_vigente_hasta'])}")]
             for d in rep["detalle"]
         ]
         elementos.append(_tabla(["Préstamo", "Socio", "Libro", "Mora", "Gravedad", "Sanción si devuelve hoy"],
@@ -387,16 +394,20 @@ def _seccion_disponibilidad(rep):
 def _seccion_efectividad_logistica(rep):
     elementos = _titulo_seccion(
         "5. Efectividad logística e incidencias",
-        "Éxito = remito entregado dentro del SLA de tránsito (3 días). Incidencia = entrega tardía o remito sin avanzar más de 3 días."
+        "Éxito = remito entregado dentro del SLA de tránsito (3 días). Incidencia = entrega tardía, remito sin avanzar "
+        "más de 3 días o remito cancelado en tránsito. Un remito cancelado antes de salir no entra en las tasas."
     )
     elementos.append(_kpis([
         ("Tasa de éxito", f"{rep['tasa_exito']}%", f"{rep['entregados_a_tiempo']} entregas a tiempo"),
-        ("Remitos entregados", f"{rep['recibidos']} / {rep['total_remitos']}",
+        ("Remitos entregados", f"{rep['recibidos']} / {rep['remitos_evaluados']}",
          f"{rep['tasa_entrega']}% completado, {rep['en_curso']} en curso"),
         ("Incidencias", rep["total_incidencias"],
-         f"{rep['entregas_tardias']} entregas tardías, {rep['estancados']} estancados"),
+         f"{rep['entregas_tardias']} entregas tardías, {rep['estancados']} estancados, "
+         f"{rep['cancelados_en_transito']} cancelados en tránsito"),
+        ("Remitos cancelados", rep["cancelados"],
+         f"{rep['cancelados_sin_salir']} antes de salir, {rep['cancelados_en_transito']} en tránsito"),
         ("Ejemplares por remito", rep["ejemplares_por_remito"],
-         f"{rep['ejemplares_enviados']} ejemplares en {rep['total_remitos']} remitos"),
+         f"{rep['ejemplares_enviados']} ejemplares en {rep['remitos_evaluados']} remitos"),
         ("Envíos evitados", rep["envios_evitados"], f"{rep['pct_envios_evitados']}% menos viajes por el agrupamiento"),
     ]))
     elementos.append(Spacer(1, 0.3 * cm))
@@ -405,7 +416,7 @@ def _seccion_efectividad_logistica(rep):
         estados = rep["remitos_por_estado"]
         elementos.append(_grafico_barh(
             list(estados.keys()), list(estados.values()),
-            color=[_COLOR_AVISO, _COLOR_AVISO, _COLOR_PRIMARIO, _COLOR_OK], alto_cm=4.5
+            color=[_COLOR_AVISO, _COLOR_AVISO, _COLOR_PRIMARIO, _COLOR_OK, _COLOR_ALERTA], alto_cm=5
         ))
 
     elementos += _subtitulo("Tiempo promedio por etapa")

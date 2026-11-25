@@ -123,12 +123,20 @@ def inicializar_bd(db_path: str = DB_PATH_DEFAULT):
                 fecha_vencimiento TEXT NOT NULL,
                 fecha_devolucion TEXT,
                 estado_devuelto TEXT,
+                cancelado INTEGER NOT NULL DEFAULT 0,
+                motivo_cancelacion TEXT NOT NULL DEFAULT '',
                 FOREIGN KEY (id_socio) REFERENCES socios (id_socio),
                 FOREIGN KEY (id_ejemplar) REFERENCES ejemplares (id_ejemplar),
                 FOREIGN KEY (id_sede_origen) REFERENCES sedes (id_sede),
                 FOREIGN KEY (id_sede_destino) REFERENCES sedes (id_sede)
             );
         """)
+        # Bases creadas antes de existir la cancelación de préstamos: se agregan las columnas sin perder datos
+        columnas_prestamos = [fila[1] for fila in cursor.execute("PRAGMA table_info(prestamos)")]
+        if "cancelado" not in columnas_prestamos:
+            cursor.execute("ALTER TABLE prestamos ADD COLUMN cancelado INTEGER NOT NULL DEFAULT 0")
+        if "motivo_cancelacion" not in columnas_prestamos:
+            cursor.execute("ALTER TABLE prestamos ADD COLUMN motivo_cancelacion TEXT NOT NULL DEFAULT ''")
 
         # Tabla Reservas
         cursor.execute("""

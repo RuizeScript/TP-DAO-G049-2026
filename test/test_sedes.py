@@ -3,7 +3,7 @@ import sqlite3
 import pytest
 
 from models.gestor import GestorBiblioteca
-from models.entidades import Sede
+from models.entidades import Sede, Socio, Libro, Ejemplar
 from models.datos_demo import cargar_datos_iniciales
 from models.horarios import normalizar_horarios
 from models.excepciones import BibliotecaExcepcion, HorarioInvalidoError
@@ -148,6 +148,145 @@ def test_dar_de_baja_otra_vez_pide_un_motivo_nuevo(gestor):
         gestor.cambiar_estado_sede(sede.id_sede, False, "")
     gestor.cambiar_estado_sede(sede.id_sede, False, "Mudanza")
     assert sede.comentarios == "Mudanza"
+
+
+# --- Editar sedes ---
+
+def test_editar_sede_cambia_los_datos_y_persiste_sin_tocar_el_estado(gestor):
+    sede = gestor.agregar_sede(Sede(nombre="Norte", direccion="Calle 1", contacto="a@r.org", horarios=HORARIO))
+    id_original = sede.id_sede
+
+    editada = gestor.editar_sede(id_original, "  Norte Nueva ", "Calle 2", "b@r.org", "lun a sab 8:00 - 12:00")
+
+    assert editada is sede
+    assert (sede.id_sede, sede.nombre, sede.direccion, sede.contacto) == (id_original, "Norte Nueva", "Calle 2", "b@r.org")
+    assert (sede.horarios, sede.activa, sede.comentarios) == ("Lun a Sáb 08:00 - 12:00", True, "")   # horario normalizado
+    gestor._cargar_desde_bd()
+    recargada = gestor.sedes[id_original]
+    assert (recargada.nombre, recargada.direccion, recargada.contacto, recargada.horarios) == (
+        "Norte Nueva", "Calle 2", "b@r.org", "Lun a Sáb 08:00 - 12:00")
+
+
+def test_editar_sede_con_datos_invalidos_no_cambia_nada(gestor):
+    sede = gestor.agregar_sede(Sede(nombre="Norte", direccion="Calle 1", contacto="a@r.org", horarios=HORARIO))
+    with pytest.raises(HorarioInvalidoError):
+        gestor.editar_sede(sede.id_sede, "Otro nombre", "Calle 2", "b@r.org", "Cerrada")
+    for nombre, direccion, contacto in [("", "Calle 2", "b@r.org"), ("N", "  ", "b@r.org"), ("N", "Calle 2", "")]:
+        with pytest.raises(BibliotecaExcepcion, match="obligatorios"):
+            gestor.editar_sede(sede.id_sede, nombre, direccion, contacto, HORARIO)
+    assert (sede.nombre, sede.direccion, sede.contacto, sede.horarios) == ("Norte", "Calle 1", "a@r.org", HORARIO)
+    gestor._cargar_desde_bd()
+    assert gestor.sedes[sede.id_sede].nombre == "Norte"
+
+
+def test_editar_sede_inexistente_falla(gestor):
+    with pytest.raises(BibliotecaExcepcion, match="no encontrada"):
+        gestor.editar_sede("SED-99", "N", "D", "C", HORARIO)
+
+
+def test_editar_sede_inactiva_permite_corregir_el_motivo_pero_no_dejarlo_vacio(gestor):
+    sede = gestor.agregar_sede(Sede(nombre="Sur", direccion="D", contacto="C", horarios=HORARIO, activa=False, comentarios="Obras"))
+    gestor.editar_sede(sede.id_sede, "Sur", "D", "C", HORARIO, comentarios="  Obras hasta marzo ")
+    assert (sede.activa, sede.comentarios) == (False, "Obras hasta marzo")
+
+    gestor.editar_sede(sede.id_sede, "Sur 2", "D", "C", HORARIO)                 # sin tocar el motivo: se conserva
+    assert sede.comentarios == "Obras hasta marzo"
+
+    with pytest.raises(BibliotecaExcepcion, match="motivo"):
+        gestor.editar_sede(sede.id_sede, "Sur 3", "D", "C", HORARIO, comentarios="   ")
+    assert (sede.nombre, sede.comentarios) == ("Sur 2", "Obras hasta marzo")
+    gestor._cargar_desde_bd()
+    assert gestor.sedes[sede.id_sede].comentarios == "Obras hasta marzo"
+
+
+def test_editar_sede_activa_ignora_comentarios(gestor):
+    sede = gestor.agregar_sede(Sede(nombre="Norte", direccion="D", contacto="C", horarios=HORARIO))
+    gestor.editar_sede(sede.id_sede, "Norte", "D", "C", HORARIO, comentarios="algo suelto")
+    assert sede.comentarios == ""
+
+
+def test_editar_sede_se_ve_en_los_ejemplares_que_la_usan(gestor):
+    sede = gestor.agregar_sede(Sede(nombre="Norte", direccion="D", contacto="C", horarios=HORARIO))
+    libro = gestor.agregar_libro(Libro(isbn="978-1", titulo="Dune", autor="H"))
+    ejemplar = gestor.agregar_ejemplar(Ejemplar(libro=libro, sede=sede))
+    gestor.editar_sede(sede.id_sede, "Norte Renovada", "D", "C", HORARIO)
+    assert ejemplar.sede.nombre == "Norte Renovada"          # mismo objeto Sede: no quedan copias desactualizadas
+
+
+# --- Eliminar sedes ---
+
+def test_eliminar_sede_sin_registros_la_borra_de_memoria_y_de_la_base(gestor):
+    sede = gestor.agregar_sede(Sede(nombre="Norte", direccion="D", contacto="C", horarios=HORARIO))
+    otra = gestor.agregar_sede(Sede(nombre="Sur", direccion="D", contacto="C", horarios=HORARIO))
+    assert gestor.referencias_de_sede(sede.id_sede) == []
+
+    borrada = gestor.eliminar_sede(sede.id_sede)
+
+    assert borrada is sede
+    assert list(gestor.sedes) == [otra.id_sede]
+    with sqlite3.connect(gestor.db_path) as cx:
+        assert [f[0] for f in cx.execute("SELECT id_sede FROM sedes")] == [otra.id_sede]
+    gestor._cargar_desde_bd()
+    assert list(gestor.sedes) == [otra.id_sede]
+
+
+def test_eliminar_sede_inexistente_falla(gestor):
+    with pytest.raises(BibliotecaExcepcion, match="no encontrada"):
+        gestor.eliminar_sede("SED-99")
+
+
+def test_eliminar_sede_inactiva_tambien_se_puede(gestor):
+    sede = gestor.agregar_sede(Sede(nombre="Sur", direccion="D", contacto="C", horarios=HORARIO, activa=False, comentarios="Obras"))
+    gestor.eliminar_sede(sede.id_sede)
+    assert gestor.sedes == {}
+
+
+@pytest.fixture
+def red_minima(gestor):
+    a = gestor.agregar_sede(Sede(nombre="A", direccion="D", contacto="C", horarios=HORARIO))
+    b = gestor.agregar_sede(Sede(nombre="B", direccion="D", contacto="C", horarios=HORARIO))
+    libro = gestor.agregar_libro(Libro(isbn="978-1", titulo="Dune", autor="H"))
+    socio = gestor.agregar_socio(Socio(nombre="Ana", apellido="Paz", dni="111", email="a@t.com"))
+    return gestor, a, b, libro, socio
+
+
+def test_no_se_elimina_una_sede_con_ejemplares(red_minima):
+    gestor, a, b, libro, socio = red_minima
+    gestor.agregar_ejemplar(Ejemplar(libro=libro, sede=a))
+    gestor.agregar_ejemplar(Ejemplar(libro=libro, sede=a))
+
+    assert gestor.referencias_de_sede(a.id_sede) == ["2 ejemplares"]
+    with pytest.raises(BibliotecaExcepcion, match="2 ejemplares"):
+        gestor.eliminar_sede(a.id_sede)
+    assert a.id_sede in gestor.sedes
+    gestor._cargar_desde_bd()                                  # sigue en la base y la carga no se rompe
+    assert a.id_sede in gestor.sedes
+    assert gestor.eliminar_sede(b.id_sede).id_sede == b.id_sede      # la otra, sin registros, sí se puede
+
+
+def test_no_se_elimina_una_sede_con_reservas(red_minima):
+    gestor, a, b, libro, socio = red_minima
+    gestor.crear_reserva(id_socio=socio.id_socio, isbn=libro.isbn, id_sede=b.id_sede)
+
+    assert gestor.referencias_de_sede(b.id_sede) == ["1 reserva"]
+    with pytest.raises(BibliotecaExcepcion, match="1 reserva"):
+        gestor.eliminar_sede(b.id_sede)
+
+
+def test_no_se_elimina_una_sede_con_prestamos_ni_remitos_ni_siendo_destino(red_minima):
+    gestor, a, b, libro, socio = red_minima
+    ejemplar = gestor.agregar_ejemplar(Ejemplar(libro=libro, sede=a))
+    gestor.crear_prestamo(id_socio=socio.id_socio, id_ejemplar=ejemplar.id_ejemplar,
+                          id_sede_origen=a.id_sede, id_sede_destino=b.id_sede)
+
+    # B no tiene ejemplares propios, pero es destino de un préstamo y de un remito
+    assert gestor.referencias_de_sede(b.id_sede) == ["1 préstamo", "1 remito"]
+    with pytest.raises(BibliotecaExcepcion, match="1 préstamo, 1 remito"):
+        gestor.eliminar_sede(b.id_sede)
+    assert gestor.referencias_de_sede(a.id_sede) == ["1 ejemplar", "1 préstamo", "1 remito"]
+    with pytest.raises(BibliotecaExcepcion, match="Inhabilitala"):
+        gestor.eliminar_sede(a.id_sede)
+    assert set(gestor.sedes) == {a.id_sede, b.id_sede}
 
 
 # --- Bases existentes y datos demo ---

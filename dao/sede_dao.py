@@ -54,6 +54,17 @@ class SedeDAO:
             filas = cur.fetchall()
             return [self._fila_a_sede(row) for row in filas]
 
+    def actualizar(self, sede: Sede) -> int:
+        """Guarda los datos editables de la sede (el ID no cambia: otras tablas lo referencian)."""
+        with self._conn() as cx:
+            cur = cx.execute(
+                """UPDATE sedes SET nombre = ?, direccion = ?, contacto = ?, horarios = ?, activa = ?, comentarios = ?
+                   WHERE id_sede = ?""",
+                (sede.nombre, sede.direccion, sede.contacto, sede.horarios,
+                 1 if sede.activa else 0, sede.comentarios or "", sede.id_sede)
+            )
+            return cur.rowcount
+
     def actualizar_estado(self, id_sede: str, activa: bool, comentarios: str = "") -> int:
         """Cambia el estado de la sede y su comentario (motivo de la baja; vacío si está activa)."""
         with self._conn() as cx:

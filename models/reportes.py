@@ -11,7 +11,7 @@ from datetime import date, timedelta
 
 from models.enum import EstadoEjemplar, Estado
 from models.operaciones import FACTOR_SANCION_POR_MORA
-from models.remito import Creado, Empaquetado, Despachado, Recibido
+from models.remito import Creado, Empaquetado, Despachado, Recibido, Cancelado
 
 # --- Umbrales de negocio: se ajustan acá sin tocar la lógica de los reportes ---
 DIAS_POR_VENCER = 3          # un préstamo "por vencer" vence dentro de este número de días o menos
@@ -92,7 +92,7 @@ class Reportes:
 
         detalle = []
         for p in g.prestamos:
-            if p.fecha_devolucion is not None:
+            if not p.esta_abierto:      # los devueltos y los cancelados ya no están activos
                 continue
             dias_restantes = (p.fecha_vencimiento - hoy).days
             if dias_restantes < 0:
@@ -155,6 +155,10 @@ class Reportes:
         """
         Mora actual por gravedad y por socio, sanción proyectada (regla: FACTOR_SANCION_POR_MORA días de
         inhabilitación por día de retraso), sanciones vigentes y tasa de incumplimiento histórica.
+
+        La sanción proyectada respeta la regla real de la devolución: si el socio ya está sancionado se mantiene la
+        fecha que termina más tarde (las sanciones no se pisan ni se acortan). Por eso cada préstamo informa si
+        devolverlo hoy tendría efecto ("extiende_sancion") o si el socio ya tiene una sanción igual o más larga.
         """
         hoy = hoy or date.today()
         g = self.gestor
@@ -171,12 +175,17 @@ class Reportes:
             else:
                 gravedad = "Grave"
             sancion_dias = dias * FACTOR_SANCION_POR_MORA
+            sancion_hasta = hoy + timedelta(days=sancion_dias)
+            actual = p.socio.penalizado_hasta
+            vigente = actual if actual is not None and actual >= hoy else None   # sanción que todavía rige hoy
             vencidos.append({
                 "prestamo": p,
                 "dias_retraso": dias,
                 "gravedad": gravedad,
                 "sancion_dias": sancion_dias,                      # si devolviera hoy
-                "sancion_hasta": hoy + timedelta(days=sancion_dias),
+                "sancion_hasta": sancion_hasta,
+                "sancion_vigente_hasta": vigente,
+                "extiende_sancion": actual is None or sancion_hasta > actual,   # False: ya tiene una igual o más larga
             })
         vencidos.sort(key=lambda d: d["dias_retraso"], reverse=True)
 
@@ -206,6 +215,17 @@ class Reportes:
                                     "dias_restantes": (s.penalizado_hasta - hoy).days})
         sancionados.sort(key=lambda f: f["dias_restantes"], reverse=True)
 
+        # Proyección por socio: si devolviera todo hoy, su sanción es la más larga de sus préstamos (no la suma),
+        # y solo se aplica si supera a la que ya tiene.
+        filas_por_socio = {}
+        for d in vencidos:
+            filas_por_socio.setdefault(d["prestamo"].socio.id_socio, []).append(d)
+        dias_a_aplicar = [
+            max(f["sancion_dias"] for f in filas)
+            for filas in filas_por_socio.values() if any(f["extiende_sancion"] for f in filas)
+        ]
+        socios_sin_efecto = sum(1 for filas in filas_por_socio.values() if not any(f["extiende_sancion"] for f in filas))
+
         gravedades = Counter(d["gravedad"] for d in vencidos)
         moras = [d["dias_retraso"] for d in vencidos]
         return {
@@ -214,7 +234,9 @@ class Reportes:
             "mora_total": sum(moras),
             "mora_promedio": round(_promedio(moras), 1) if moras else 0.0,
             "mora_maxima": max(moras) if moras else 0,
-            "sancion_proyectada_total": sum(d["sancion_dias"] for d in vencidos),
+            "socios_a_sancionar": len(dias_a_aplicar),             # sanciones nuevas o ampliadas si devolvieran hoy
+            "sancion_proyectada_max_dias": max(dias_a_aplicar) if dias_a_aplicar else 0,
+            "socios_sin_efecto": socios_sin_efecto,                # ya tienen una sanción igual o más larga
             "por_gravedad": {"Leve": gravedades["Leve"], "Moderada": gravedades["Moderada"], "Grave": gravedades["Grave"]},
             "detalle": vencidos,
             "por_socio": por_socio,
@@ -231,6 +253,7 @@ class Reportes:
     def demanda_intersedes(self) -> dict:
         """Ranking de títulos más pedidos entre sedes, contrastado con su oferta (ejemplares) y sus reservas."""
         g = self.gestor
+        # Las solicitudes canceladas (por un remito cancelado) siguen contando: el pedido existió, la demanda es real.
         inter = [p for p in g.prestamos if p.es_interbibliotecario]
 
         acumulado = {}
@@ -348,14 +371,21 @@ class Reportes:
     # =========================================================================
     def efectividad_logistica(self, hoy: date = None) -> dict:
         """
-        Éxito = remito entregado dentro del SLA de tránsito. Incidencias = entregas tardías y remitos estancados
-        (sin avanzar más de DIAS_ESTANCAMIENTO días). Incluye tiempos promedio por etapa y el efecto del agrupamiento.
+        Éxito = remito entregado dentro del SLA de tránsito. Incidencias = entregas tardías, remitos estancados
+        (sin avanzar más de DIAS_ESTANCAMIENTO días) y remitos cancelados estando ya en tránsito.
+        Un remito cancelado ANTES de salir no es una falla logística: no entra en las tasas ni en el agrupamiento,
+        solo se informa aparte. Incluye tiempos promedio por etapa y el efecto del agrupamiento.
         """
         hoy = hoy or date.today()
         remitos = self.gestor.remitos
 
         recibidos = [r for r in remitos if isinstance(r.estado_actual, Recibido)]
-        en_curso = [r for r in remitos if not isinstance(r.estado_actual, Recibido)]
+        cancelados = [r for r in remitos if isinstance(r.estado_actual, Cancelado)]
+        cancelados_en_transito = [r for r in cancelados if r.fue_despachado]
+        cancelados_sin_salir = [r for r in cancelados if not r.fue_despachado]
+        en_curso = [r for r in remitos if not isinstance(r.estado_actual, (Recibido, Cancelado))]
+        # Remitos que efectivamente entran en la evaluación logística: todos menos los que nunca salieron
+        evaluados = [r for r in remitos if not any(r is c for c in cancelados_sin_salir)]
 
         incidencias, a_tiempo = [], 0
         for r in recibidos:
@@ -378,6 +408,13 @@ class Reportes:
                     "remito": r, "tipo": "Estancado", "dias": dias_sin_avance,
                     "detalle": f"Lleva {dias_sin_avance} días en estado {r.estado_actual}",
                 })
+        for r in cancelados_en_transito:
+            en_camino = _segundos_entre(r, "Despachado", "Cancelado")
+            incidencias.append({
+                "remito": r, "tipo": "Cancelado en tránsito",
+                "dias": round(en_camino / 86400, 1) if en_camino is not None else 0,
+                "detalle": f"Se canceló tras {formatear_duracion(en_camino)} en camino: {r.motivo_cancelacion}",
+            })
         incidencias.sort(key=lambda i: i["dias"], reverse=True)
 
         etapas = []
@@ -395,30 +432,35 @@ class Reportes:
                 "maximo_s": max(duraciones) if duraciones else None,
             })
 
-        ejemplares_enviados = sum(r.cantidad_ejemplares for r in remitos)
-        resueltos = len(recibidos) + estancados   # envíos cuyo resultado ya se puede evaluar
+        ejemplares_enviados = sum(r.cantidad_ejemplares for r in evaluados)
+        # envíos cuyo resultado ya se puede evaluar (un cancelado en tránsito es un envío fallido)
+        resueltos = len(recibidos) + estancados + len(cancelados_en_transito)
         return {
             "fecha_corte": hoy,
             "total_remitos": len(remitos),
+            "remitos_evaluados": len(evaluados),
             "recibidos": len(recibidos),
             "en_curso": len(en_curso),
+            "cancelados": len(cancelados),
+            "cancelados_sin_salir": len(cancelados_sin_salir),
+            "cancelados_en_transito": len(cancelados_en_transito),
             "entregados_a_tiempo": a_tiempo,
             "entregas_tardias": len(recibidos) - a_tiempo,
             "estancados": estancados,
-            "tasa_entrega": porcentaje(len(recibidos), len(remitos)),
+            "tasa_entrega": porcentaje(len(recibidos), len(evaluados)),
             "tasa_exito": porcentaje(a_tiempo, resueltos),
             "total_incidencias": len(incidencias),
             "incidencias": incidencias,
             "tiempos_por_etapa": etapas,
             "ejemplares_enviados": ejemplares_enviados,
-            "ejemplares_por_remito": round(ejemplares_enviados / len(remitos), 2) if remitos else 0.0,
+            "ejemplares_por_remito": round(ejemplares_enviados / len(evaluados), 2) if evaluados else 0.0,
             # sin agrupar, cada ejemplar habría viajado en su propio envío
-            "envios_evitados": ejemplares_enviados - len(remitos),
-            "pct_envios_evitados": porcentaje(ejemplares_enviados - len(remitos), ejemplares_enviados),
+            "envios_evitados": ejemplares_enviados - len(evaluados),
+            "pct_envios_evitados": porcentaje(ejemplares_enviados - len(evaluados), ejemplares_enviados),
             "remitos_por_estado": {
                 nombre: sum(1 for r in remitos if isinstance(r.estado_actual, clase))
                 for nombre, clase in (("Creado", Creado), ("Empaquetado", Empaquetado),
-                                      ("Despachado", Despachado), ("Recibido", Recibido))
+                                      ("Despachado", Despachado), ("Recibido", Recibido), ("Cancelado", Cancelado))
             },
         }
 
@@ -427,7 +469,8 @@ class Reportes:
     # =========================================================================
     def movimiento_entre_sedes(self) -> dict:
         """Envíos por ruta (origen → destino) con tiempo de tránsito, y balance de ejemplares enviados/recibidos por sede."""
-        remitos = self.gestor.remitos
+        # Un remito cancelado no movió ejemplares entre sedes: no cuenta como movimiento
+        remitos = [r for r in self.gestor.remitos if not isinstance(r.estado_actual, Cancelado)]
 
         rutas = {}
         balance = {}

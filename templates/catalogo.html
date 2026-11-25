@@ -55,6 +55,7 @@
                             <th>Ubicación Actual (Sede)</th>
                             <th>Estado Físico</th>
                             <th>Disponibilidad</th>
+                            <th>Acción</th>
                         </tr>
                     </thead>
                     <tbody>
@@ -69,10 +70,22 @@
                                     {{ ej.estado_ejemplar.value }}
                                 </span>
                             </td>
+                            <td>
+                                {# Lleva a Préstamos con este ejemplar ya elegido; el socio y la sede de destino se completan allá #}
+                                {% if ej.sede.activa %}
+                                <a href="{{ url_for('prestamos', ejemplar=ej.id_ejemplar) }}" class="btn btn-sm btn-outline-primary text-nowrap" title="Registrar un préstamo de este ejemplar">
+                                    <i class="bi bi-arrow-left-right me-1"></i> Registrar préstamo
+                                </a>
+                                {% else %}
+                                <button type="button" class="btn btn-sm btn-outline-secondary text-nowrap" disabled title="La sede está dada de baja: no se puede prestar desde ahí">
+                                    <i class="bi bi-slash-circle me-1"></i> Sede de baja
+                                </button>
+                                {% endif %}
+                            </td>
                         </tr>
                         {% else %}
                         <tr>
-                            <td colspan="5" class="text-center py-3 text-muted">
+                            <td colspan="6" class="text-center py-3 text-muted">
                                 <i class="bi bi-info-circle me-1"></i> No se encontraron ejemplares disponibles para el criterio seleccionado.
                             </td>
                         </tr>

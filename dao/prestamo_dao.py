@@ -56,6 +56,8 @@ class PrestamoDAO:
         prestamo.fecha_vencimiento = date.fromisoformat(row["fecha_vencimiento"])
         prestamo.fecha_devolucion = date.fromisoformat(row["fecha_devolucion"]) if row["fecha_devolucion"] else None
         prestamo.estado_devuelto = Estado[row["estado_devuelto"]] if row["estado_devuelto"] else None
+        prestamo.cancelado = bool(row["cancelado"])
+        prestamo.motivo_cancelacion = row["motivo_cancelacion"] or ""
         return prestamo
 
     def obtener_por_id(
@@ -81,9 +83,18 @@ class PrestamoDAO:
     ) -> List[Prestamo]:
         with self._conn() as cx:
             cx.row_factory = sqlite3.Row
-            cur = cx.execute("SELECT * FROM prestamos ORDER BY fecha_inicio")
+            cur = cx.execute("SELECT * FROM prestamos ORDER BY fecha_inicio, rowid")
             filas = cur.fetchall()
             return [self._fila_a_prestamo(r, socios_dict, ejemplares_dict, sedes_dict) for r in filas]
+
+    def actualizar_cancelacion(self, id_prestamo: str, motivo: str) -> int:
+        """Marca el préstamo como cancelado y guarda el motivo."""
+        with self._conn() as cx:
+            cur = cx.execute(
+                "UPDATE prestamos SET cancelado = 1, motivo_cancelacion = ? WHERE id_prestamo = ?",
+                (motivo or "", id_prestamo)
+            )
+            return cur.rowcount
 
     def actualizar_devolucion(self, id_prestamo: str, fecha_devolucion: date, estado_devuelto: Estado) -> int:
         with self._conn() as cx:

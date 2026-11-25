@@ -72,7 +72,7 @@
                         <tbody>
                             {% for s in sedes %}
                             <tr class="{% if not s.activa %}table-secondary text-muted{% endif %}">
-                                <td class="fw-bold">{{ s.id_sede }}</td>
+                                <td class="fw-bold text-nowrap">{{ s.id_sede }}</td>
                                 <td class="fw-medium text-dark">{{ s.nombre }}</td>
                                 <td>
                                     <div class="small">{{ s.direccion }}</div>
@@ -104,12 +104,107 @@
                                     {% endif %}
                                 </td>
                                 <td>
+                                    <div class="d-flex flex-wrap align-items-center gap-1">
+                                        <button type="button" class="btn btn-sm btn-outline-primary px-2" title="Editar sede" data-bs-toggle="modal" data-bs-target="#modalEditar{{ s.id_sede }}">
+                                            <i class="bi bi-pencil"></i>
+                                        </button>
+                                        <button type="button" class="btn btn-sm btn-outline-danger px-2" title="Eliminar definitivamente" data-bs-toggle="modal" data-bs-target="#modalEliminar{{ s.id_sede }}">
+                                            <i class="bi bi-trash"></i>
+                                        </button>
                                     {% if s.activa %}
                                         <!-- Inhabilitar pide el motivo de la baja (queda en Comentarios) -->
                                         <button type="button" class="btn btn-sm btn-outline-danger" title="Dar de baja" data-bs-toggle="modal" data-bs-target="#modalBaja{{ s.id_sede }}">
                                             <i class="bi bi-slash-circle"></i> Inhabilitar
                                         </button>
+                                    {% else %}
+                                        <form action="{{ url_for('toggle_sede', id_sede=s.id_sede) }}" method="POST" class="d-inline">
+                                            <button type="submit" class="btn btn-sm btn-outline-success" title="Reactivar (se borra el motivo de la baja)">
+                                                <i class="bi bi-check2-circle"></i> Activar
+                                            </button>
+                                        </form>
+                                    {% endif %}
+                                    </div>
 
+                                    <!-- Editar: se abre acá mismo, sobre la tabla de sedes. El ID no se modifica -->
+                                    <div class="modal fade" id="modalEditar{{ s.id_sede }}" tabindex="-1">
+                                        <div class="modal-dialog modal-dialog-centered">
+                                            <div class="modal-content">
+                                                <form action="{{ url_for('editar_sede', id_sede=s.id_sede) }}" method="POST">
+                                                    <div class="modal-header">
+                                                        <h6 class="modal-title fw-bold">Editar sede <span class="text-muted">{{ s.id_sede }}</span></h6>
+                                                        <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+                                                    </div>
+                                                    <div class="modal-body">
+                                                        <div class="mb-3">
+                                                            <label class="form-label small fw-semibold">Nombre de la Sede</label>
+                                                            <input type="text" name="nombre" class="form-control" value="{{ s.nombre }}" required>
+                                                        </div>
+                                                        <div class="mb-3">
+                                                            <label class="form-label small fw-semibold">Dirección</label>
+                                                            <input type="text" name="direccion" class="form-control" value="{{ s.direccion }}" required>
+                                                        </div>
+                                                        <div class="mb-3">
+                                                            <label class="form-label small fw-semibold">Contacto (Tel / Email)</label>
+                                                            <input type="text" name="contacto" class="form-control" value="{{ s.contacto }}" required>
+                                                        </div>
+                                                        <div class="{% if s.activa %}mb-0{% else %}mb-3{% endif %}">
+                                                            <label class="form-label small fw-semibold">Horarios de Atención</label>
+                                                            <input type="text" name="horarios" class="form-control" value="{{ s.horarios }}" placeholder="Ej: Lun a Vie 09:00 - 18:00" required>
+                                                            <div class="form-text small">DDD a DDD HH:MM - HH:MM</div>
+                                                        </div>
+                                                        {% if not s.activa %}
+                                                        <div>
+                                                            <label class="form-label small fw-semibold">Comentarios (motivo de la baja)</label>
+                                                            <textarea name="comentarios" class="form-control" rows="2" style="border-radius: 18px;" required>{{ s.comentarios }}</textarea>
+                                                        </div>
+                                                        {% endif %}
+                                                    </div>
+                                                    <div class="modal-footer">
+                                                        <button type="button" class="btn btn-secondary btn-sm" data-bs-dismiss="modal">Cancelar</button>
+                                                        <button type="submit" class="btn btn-primary btn-sm"><i class="bi bi-save me-1"></i> Guardar cambios</button>
+                                                    </div>
+                                                </form>
+                                            </div>
+                                        </div>
+                                    </div>
+
+                                    <!-- Eliminar: borra la fila de la base. Solo se permite si ningún registro usa la sede -->
+                                    <div class="modal fade" id="modalEliminar{{ s.id_sede }}" tabindex="-1">
+                                        <div class="modal-dialog modal-dialog-centered">
+                                            <div class="modal-content">
+                                                {% if en_uso[s.id_sede] %}
+                                                    <div class="modal-header">
+                                                        <h6 class="modal-title fw-bold">No se puede eliminar: {{ s.nombre }}</h6>
+                                                        <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+                                                    </div>
+                                                    <div class="modal-body small">
+                                                        Esta sede tiene registros asociados: <strong>{{ en_uso[s.id_sede]|join(', ') }}</strong>.
+                                                        Si se borrara, quedarían apuntando a una sede que no existe.
+                                                        Para dejarla fuera de operación conservando el historial, usá <strong>Inhabilitar</strong>.
+                                                    </div>
+                                                    <div class="modal-footer">
+                                                        <button type="button" class="btn btn-secondary btn-sm" data-bs-dismiss="modal">Entendido</button>
+                                                    </div>
+                                                {% else %}
+                                                    <form action="{{ url_for('eliminar_sede', id_sede=s.id_sede) }}" method="POST">
+                                                        <div class="modal-header">
+                                                            <h6 class="modal-title fw-bold">Eliminar sede: {{ s.nombre }}</h6>
+                                                            <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+                                                        </div>
+                                                        <div class="modal-body small">
+                                                            Se va a borrar <strong>definitivamente</strong> de la base de datos. Esta acción no se puede deshacer.
+                                                        </div>
+                                                        <div class="modal-footer">
+                                                            <button type="button" class="btn btn-secondary btn-sm" data-bs-dismiss="modal">Cancelar</button>
+                                                            <button type="submit" class="btn btn-danger btn-sm"><i class="bi bi-trash me-1"></i> Eliminar definitivamente</button>
+                                                        </div>
+                                                    </form>
+                                                {% endif %}
+                                            </div>
+                                        </div>
+                                    </div>
+
+                                    {% if s.activa %}
                                         <div class="modal fade" id="modalBaja{{ s.id_sede }}" tabindex="-1">
                                             <div class="modal-dialog modal-dialog-centered">
                                                 <div class="modal-content">
@@ -130,12 +225,6 @@
                                                 </div>
                                             </div>
                                         </div>
-                                    {% else %}
-                                        <form action="{{ url_for('toggle_sede', id_sede=s.id_sede) }}" method="POST" class="d-inline">
-                                            <button type="submit" class="btn btn-sm btn-outline-success" title="Reactivar (se borra el motivo de la baja)">
-                                                <i class="bi bi-check2-circle"></i> Activar
-                                            </button>
-                                        </form>
                                     {% endif %}
                                 </td>
                             </tr>

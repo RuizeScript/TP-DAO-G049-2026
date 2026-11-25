@@ -1,7 +1,7 @@
 import sqlite3
 from typing import List, Optional, Dict
 from datetime import datetime
-from models.remito import Remito, Creado, Empaquetado, Despachado, Recibido
+from models.remito import Remito, Creado, Empaquetado, Despachado, Recibido, Cancelado
 from models.entidades import Ejemplar, Sede
 from dao.database import DB_PATH_DEFAULT
 
@@ -9,7 +9,8 @@ ESTADOS_CLASES = {
     "Creado": Creado,
     "Empaquetado": Empaquetado,
     "Despachado": Despachado,
-    "Recibido": Recibido
+    "Recibido": Recibido,
+    "Cancelado": Cancelado
 }
 
 

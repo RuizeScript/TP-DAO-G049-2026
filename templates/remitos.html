@@ -6,11 +6,7 @@
 <div class="d-flex justify-content-between align-items-center mb-4">
     <div>
         <h2 class="fw-bold mb-1">Trazabilidad de Remitos Logísticos</h2>
-        <p class="text-muted mb-0">Implementación estricta del <strong>Patrón State</strong> (Creado &rarr; Empaquetado &rarr; Despachado &rarr; Recibido).</p>
-        <p class="text-muted small mb-0">
-            Cada remito agrupa <strong>varios ejemplares</strong> de una misma ruta: mientras está <em>Creado</em> (abierto) se le suman
-            automáticamente los préstamos inter-sede con ese origen y destino. Al <em>Empaquetar</em> se cierra y viaja todo junto.
-        </p>
+        <p class="text-muted mb-0">Implementación estricta del <strong>Patrón State</strong></p>
     </div>
     <span class="badge bg-primary fs-6 px-3 py-2">
         <i class="bi bi-diagram-3-fill me-1"></i> Patrón State Activo
@@ -38,7 +34,7 @@
                 <tbody>
                     {% for r in remitos %}
                     {% set estado_str = r.estado_actual.__class__.__name__ %}
-                    <tr>
+                    <tr class="{% if estado_str == 'Cancelado' %}table-secondary text-muted{% endif %}">
                         <td class="fw-bold text-dark">{{ r.id_remito }}</td>
                         <td>
                             <span class="badge bg-dark mb-1">{{ r.cantidad_ejemplares }} ejemplar{{ '' if r.cantidad_ejemplares == 1 else 'es' }}</span>
@@ -74,6 +70,12 @@
                                 <span class="badge bg-success-subtle text-success border border-success-subtle fs-6">
                                     <i class="bi bi-check-all me-1"></i> Recibido en Destino
                                 </span>
+                            {% elif estado_str == 'Cancelado' %}
+                                <span class="badge bg-danger-subtle text-danger border border-danger-subtle fs-6">
+                                    <i class="bi bi-x-octagon me-1"></i> Cancelado
+                                </span>
+                                <div class="small mt-1">Motivo: {{ r.motivo_cancelacion }}</div>
+                                {% if r.fue_despachado %}<div class="small text-muted">Se canceló estando en tránsito.</div>{% endif %}
                             {% endif %}
                         </td>
                         <td>
@@ -98,7 +100,58 @@
                                         <i class="bi bi-check2-circle"></i> Recibir
                                     </button>
                                 </form>
+
+                                <!-- Botón Cancelar: abre una ventana que pide confirmar y el motivo; no se envía directo -->
+                                <button type="button" class="btn btn-outline-danger ms-1" data-bs-toggle="modal" data-bs-target="#modalCancelar{{ r.id_remito }}"
+                                    {% if estado_str in ('Recibido', 'Cancelado') %}disabled title="{{ 'Ya fue recibido: el envío se completó' if estado_str == 'Recibido' else 'Ya está cancelado' }}"{% endif %}>
+                                    <i class="bi bi-x-octagon"></i> Cancelar
+                                </button>
                             </div>
+
+                            {% if estado_str not in ('Recibido', 'Cancelado') %}
+                            {% set afectados = prestamos_afectados[r.id_remito] %}
+                            <!-- Modal de confirmación de cancelación -->
+                            <div class="modal fade" id="modalCancelar{{ r.id_remito }}" tabindex="-1">
+                                <div class="modal-dialog modal-dialog-centered">
+                                    <div class="modal-content">
+                                        <form action="{{ url_for('cancelar_remito', id_remito=r.id_remito) }}" method="POST">
+                                            <div class="modal-header">
+                                                <h6 class="modal-title fw-bold text-danger"><i class="bi bi-exclamation-triangle-fill me-1"></i> ¿Cancelar el remito {{ r.id_remito }}?</h6>
+                                                <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+                                            </div>
+                                            <div class="modal-body">
+                                                <div class="alert alert-danger small mb-3">
+                                                    <strong>¿Estás seguro? Esta acción no se puede deshacer.</strong>
+                                                </div>
+                                                <ul class="small mb-3">
+                                                    <li>{{ r.cantidad_ejemplares }} ejemplar{{ '' if r.cantidad_ejemplares == 1 else 'es' }} vuelve{{ '' if r.cantidad_ejemplares == 1 else 'n' }}
+                                                        a estar <strong>Disponible{{ '' if r.cantidad_ejemplares == 1 else 's' }}</strong> en {{ r.sede_origen.nombre }}.</li>
+                                                    <li>
+                                                        {% if afectados %}
+                                                            {{ afectados|length }} préstamo{{ '' if afectados|length == 1 else 's' }} se
+                                                            cancela{{ '' if afectados|length == 1 else 'n' }} ({{ afectados|map(attribute='id_prestamo')|join(', ') }}):
+                                                            no vencen ni sancionan al socio.
+                                                        {% else %}
+                                                            No hay préstamos vigentes asociados a este envío.
+                                                        {% endif %}
+                                                    </li>
+                                                    {% if estado_str == 'Despachado' %}
+                                                    <li>El remito está <strong>en tránsito</strong>: se asume que los ejemplares vuelven a la sede de origen.</li>
+                                                    {% endif %}
+                                                </ul>
+                                                <label class="form-label small fw-semibold">Motivo de la cancelación</label>
+                                                <textarea name="motivo" class="form-control" rows="3" style="border-radius: 18px;" required
+                                                    placeholder="Ej: Se cayó la sede de destino / falló el transporte"></textarea>
+                                            </div>
+                                            <div class="modal-footer">
+                                                <button type="button" class="btn btn-secondary btn-sm" data-bs-dismiss="modal">No, volver</button>
+                                                <button type="submit" class="btn btn-danger btn-sm"><i class="bi bi-x-octagon me-1"></i> Sí, cancelar remito</button>
+                                            </div>
+                                        </form>
+                                    </div>
+                                </div>
+                            </div>
+                            {% endif %}
                         </td>
                         <td>
                             <button type="button" class="btn btn-sm btn-outline-secondary" data-bs-toggle="modal" data-bs-target="#modalTrazabilidad{{ r.id_remito }}">
@@ -119,8 +172,12 @@
                                                     {% for h in r.historial_trazabilidad %}
                                                     <li class="list-group-item d-flex justify-content-between align-items-start px-0 py-2">
                                                         <div class="ms-2 me-auto">
-                                                            <div class="fw-bold">{{ h.estado }} - {{ h.observacion }}</div>
-                                                            <span class="text-muted small">{{ h.fecha_hora.strftime('%Y-%m-%d %H:%M:%S') }}</span>
+                                                            <div class="fw-bold">{{ h.estado }}</div>
+                                                            {# La observación solo se muestra cuando aporta algo distinto del estado (p. ej. el motivo de una cancelación) #}
+                                                            {% if h.observacion and h.observacion != h.estado %}
+                                                            <div class="small">{% if h.estado == 'Cancelado' %}Motivo: {% endif %}{{ h.observacion }}</div>
+                                                            {% endif %}
+                                                            <span class="text-muted small">{{ h.fecha_hora.strftime('%d/%m/%Y %H:%M') }} hs</span>
                                                         </div>
                                                         <span class="badge bg-primary-subtle text-primary rounded-pill"><i class="bi bi-check"></i></span>
                                                     </li>
