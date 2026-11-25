@@ -147,11 +147,15 @@ def inicializar_bd(db_path: str = DB_PATH_DEFAULT):
                 id_sede TEXT NOT NULL,
                 fecha_solicitud TEXT NOT NULL,
                 activa INTEGER NOT NULL DEFAULT 1,
+                cumplida INTEGER NOT NULL DEFAULT 0,
                 FOREIGN KEY (id_socio) REFERENCES socios (id_socio),
                 FOREIGN KEY (isbn) REFERENCES libros (isbn),
                 FOREIGN KEY (id_sede) REFERENCES sedes (id_sede)
             );
         """)
+        # Bases creadas antes de existir "reserva cumplida": se agrega la columna sin perder datos
+        if "cumplida" not in [fila[1] for fila in cursor.execute("PRAGMA table_info(reservas)")]:
+            cursor.execute("ALTER TABLE reservas ADD COLUMN cumplida INTEGER NOT NULL DEFAULT 0")
 
         # Tabla Remitos (si ya existía con el esquema viejo, el CREATE no hace nada y migra más abajo)
         cursor.execute(_DDL_REMITOS.format(nombre="IF NOT EXISTS remitos"))

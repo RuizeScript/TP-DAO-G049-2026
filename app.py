@@ -230,6 +230,8 @@ def prestamos():
         # La sede de origen no se elige: es la sede donde está el ejemplar
         ejemplar = gestor.ejemplares.get(id_ejemplar)
         id_sede_origen = ejemplar.sede.id_sede if ejemplar else ""
+        # ¿El socio había reservado este título? Si el préstamo se concreta, esa reserva queda cumplida
+        reserva_previa = gestor.reserva_activa_de(id_socio, ejemplar.libro.isbn) if ejemplar else None
 
         try:
             p = gestor.crear_prestamo(
@@ -246,6 +248,8 @@ def prestamos():
                 msg += (f" El ejemplar viaja en el remito {remito.id_remito} "
                         f"({remito.sede_origen.nombre} → {remito.sede_destino.nombre}), "
                         f"que ahora lleva {remito.cantidad_ejemplares} ejemplar(es).")
+            if reserva_previa is not None and reserva_previa.cumplida:
+                msg += f" La reserva {reserva_previa.id_reserva} de este socio quedó cumplida."
             flash(msg, "success")
         except BibliotecaExcepcion as e:
             flash(f"Error al registrar préstamo: {e}", "danger")
@@ -315,8 +319,8 @@ def cancelar_reserva(id_reserva):
     try:
         gestor.cancelar_reserva(id_reserva)
         flash(f"Reserva '{id_reserva}' cancelada.", "info")
-    except BibliotecaExcepcion:
-        flash("Reserva no encontrada.", "danger")
+    except BibliotecaExcepcion as e:
+        flash(str(e), "danger")     # no encontrada, o ya cumplida
     return redirect(url_for("prestamos"))
 
 

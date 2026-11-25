@@ -14,7 +14,7 @@ def cargar_datos_iniciales(gestor: GestorBiblioteca):
     - Escenarios operativos representativos: préstamos locales, interbibliotecarios con remitos
       que agrupan varios ejemplares por ruta, en diversos estados (Creado, Empaquetado, Despachado/En Tránsito,
       Recibido y dos Cancelado), historial de envíos con fechas (a tiempo, tardío y estancado), préstamos vencidos con
-      distinta gravedad, préstamos devueltos en término y fuera de término, y reservas activas.
+      distinta gravedad, préstamos devueltos en término y fuera de término, y reservas (activas y una cumplida).
     """
     if gestor.sedes:
         return  # Ya fue inicializado
@@ -360,4 +360,20 @@ def cargar_datos_iniciales(gestor: GestorBiblioteca):
         isbn="978-8484326199",  # Historia del Tiempo (Hawking)
         id_sede="SED-03",
         id_reserva="RES-02"
+    )
+    # Reserva CUMPLIDA: Matías Fernández reservó Dune para retirar en Parque Patricios y ya se le prestó
+    # (registrarle el préstamo de ese título concreta su reserva).
+    gestor.crear_reserva(
+        id_socio="SOC-05",
+        isbn="978-0441013593",  # Dune
+        id_sede="SED-03",
+        id_reserva="RES-03"
+    )
+    gestor.crear_prestamo(
+        id_prestamo="PREST-118",
+        id_socio="SOC-05",
+        id_ejemplar="EJ-03",
+        id_sede_origen="SED-03",
+        id_sede_destino="SED-03",
+        dias_prestamo=14
     )

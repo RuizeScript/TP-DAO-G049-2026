@@ -78,7 +78,7 @@
         <div class="card shadow-sm border-top border-4 border-warning">
             <div class="card-header bg-white py-3 border-0">
                 <h5 class="fw-bold mb-0 text-dark"><i class="bi bi-bookmark-plus text-warning me-2"></i>Gestionar Reserva de Libro</h5>
-                <small class="text-muted">Reserva anticipada por título para un socio</small>
+                <small class="text-muted">Reserva anticipada por título para un socio (se cumple sola al registrarle el préstamo)</small>
             </div>
             <div class="card-body">
                 <form action="{{ url_for('crear_reserva') }}" method="POST">
@@ -308,10 +308,12 @@
                         <td>{{ r.sede.nombre }}</td>
                         <td class="small">{{ r.fecha_solicitud }}</td>
                         <td>
-                            {% if r.activa %}
+                            {% if r.cumplida %}
+                                <span class="badge bg-success-subtle text-success border border-success-subtle"><i class="bi bi-check2 me-1"></i>Cumplida</span>
+                            {% elif r.activa %}
                                 <span class="badge bg-warning-subtle text-dark border border-warning-subtle">Activa</span>
                             {% else %}
-                                <span class="badge bg-secondary-subtle text-muted border">Cancelada / Inactiva</span>
+                                <span class="badge bg-secondary-subtle text-muted border">Cancelada</span>
                             {% endif %}
                         </td>
                         <td>

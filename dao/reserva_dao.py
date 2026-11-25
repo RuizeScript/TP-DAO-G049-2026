@@ -16,15 +16,16 @@ class ReservaDAO:
     def crear(self, reserva: Reserva) -> None:
         with self._conn() as cx:
             cx.execute("""
-                INSERT INTO reservas (id_reserva, id_socio, isbn, id_sede, fecha_solicitud, activa)
-                VALUES (?, ?, ?, ?, ?, ?)
+                INSERT INTO reservas (id_reserva, id_socio, isbn, id_sede, fecha_solicitud, activa, cumplida)
+                VALUES (?, ?, ?, ?, ?, ?, ?)
             """, (
                 reserva.id_reserva,
                 reserva.socio.id_socio,
                 reserva.libro.isbn,
                 reserva.sede.id_sede,
                 reserva.fecha_solicitud.isoformat(),
-                1 if reserva.activa else 0
+                1 if reserva.activa else 0,
+                1 if reserva.cumplida else 0
             ))
 
     def _fila_a_reserva(
@@ -45,6 +46,7 @@ class ReservaDAO:
         reserva.sede = sede
         reserva.fecha_solicitud = date.fromisoformat(row["fecha_solicitud"])
         reserva.activa = bool(row["activa"])
+        reserva.cumplida = bool(row["cumplida"])
         return reserva
 
     def obtener_por_id(
@@ -70,9 +72,15 @@ class ReservaDAO:
     ) -> List[Reserva]:
         with self._conn() as cx:
             cx.row_factory = sqlite3.Row
-            cur = cx.execute("SELECT * FROM reservas ORDER BY fecha_solicitud")
+            cur = cx.execute("SELECT * FROM reservas ORDER BY fecha_solicitud, rowid")   # la más antigua primero
             filas = cur.fetchall()
             return [self._fila_a_reserva(r, socios_dict, libros_dict, sedes_dict) for r in filas]
+
+    def actualizar_cumplida(self, id_reserva: str) -> int:
+        """Marca la reserva como cumplida (deja de estar activa)."""
+        with self._conn() as cx:
+            cur = cx.execute("UPDATE reservas SET activa = 0, cumplida = 1 WHERE id_reserva = ?", (id_reserva,))
+            return cur.rowcount
 
     def actualizar_activa(self, id_reserva: str, activa: bool) -> int:
         with self._conn() as cx:

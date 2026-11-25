@@ -128,10 +128,28 @@ class Reserva:
         self.libro: Libro = libro
         self.sede: Sede = sede
         self.fecha_solicitud: date = date.today()
+        # 'activa' es True solo mientras la reserva está pendiente; al cumplirse o cancelarse pasa a False
         self.activa: bool = True
+        self.cumplida: bool = False
+
+    @property
+    def estado(self) -> str:
+        """Activa (pendiente), Cumplida (se le prestó el libro al socio) o Cancelada."""
+        if self.cumplida:
+            return "Cumplida"
+        return "Activa" if self.activa else "Cancelada"
 
     def cancelar(self):
+        if self.cumplida:
+            raise BibliotecaExcepcion(f"La reserva {self.id_reserva} ya fue cumplida: no se puede cancelar.")
         self.activa = False
+
+    def cumplir(self):
+        """Se concreta la reserva: el socio retiró el libro (se le registró el préstamo). Solo si sigue activa."""
+        if not self.activa:
+            raise BibliotecaExcepcion(f"La reserva {self.id_reserva} no está activa ({self.estado}): no se puede cumplir.")
+        self.activa = False
+        self.cumplida = True
 
     def __str__(self) -> str:
         return f"Reserva {self.id_reserva}: Libro '{self.libro.titulo}' por {self.socio.nombre} en {self.sede.nombre}"

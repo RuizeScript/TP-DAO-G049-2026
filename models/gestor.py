@@ -348,6 +348,12 @@ class GestorBiblioteca:
             fecha_remito = datetime.combine(fecha_inicio, time(9, 0)) if fecha_inicio else None
             self._asignar_a_remito(ejemplar, sede_origen, sede_destino, fecha_remito)
 
+        # Si el socio había reservado este título, retirarlo (el préstamo) concreta la reserva
+        reserva = self.reserva_activa_de(socio.id_socio, ejemplar.libro.isbn)
+        if reserva is not None:
+            reserva.cumplir()
+            self.reserva_dao.actualizar_cumplida(reserva.id_reserva)
+
         return prestamo
 
     def prestamos_recientes(self) -> list:
@@ -547,6 +553,13 @@ class GestorBiblioteca:
         self.reserva_dao.crear(reserva)
         self.reservas.append(reserva)
         return reserva
+
+    def reserva_activa_de(self, id_socio: str, isbn: str):
+        """Reserva activa (pendiente) más antigua de ese socio para ese título, o None si no tiene ninguna."""
+        return next(
+            (r for r in self.reservas if r.activa and r.socio.id_socio == id_socio and r.libro.isbn == isbn),
+            None
+        )
 
     def cancelar_reserva(self, id_reserva: str):
         reserva = next((r for r in self.reservas if r.id_reserva == id_reserva), None)
